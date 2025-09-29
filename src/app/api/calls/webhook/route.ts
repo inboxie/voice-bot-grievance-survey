@@ -204,7 +204,7 @@ function generateTwiMLResponse(webhookData: TwilioWebhookPayload): string {
 /**
  * Handle machine detection webhook
  */
-export async function handleMachineDetection(request: NextRequest) {
+async function handleMachineDetection(request: NextRequest) {
   try {
     const body = await request.text()
     const formData = new URLSearchParams(body)
