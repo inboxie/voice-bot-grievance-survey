@@ -12,7 +12,7 @@ export interface UploadResponse {
   customers: Array<{
     name: string
     phone: string
-    reason: string
+    reason?: string
     matchedServices?: string[]
   }>
   summary: {
@@ -29,7 +29,7 @@ export interface StartCampaignRequest {
   customers: Array<{
     name: string
     phone: string
-    reason: string
+    reason?: string
   }>
   services: string[]
   settings?: {
