@@ -182,7 +182,7 @@ function generateTwiMLResponse(webhookData: TwilioWebhookPayload): string {
       // Call is ringing, no action needed
       return '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
       
-    case 'answered':
+    case 'in-progress':
       // Call was answered - the main call flow is handled by TwiML endpoint
       return '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
       
