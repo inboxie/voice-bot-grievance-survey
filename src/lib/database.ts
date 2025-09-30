@@ -2,9 +2,20 @@ import { sql } from '@vercel/postgres'
 import { ProcessedCustomer } from '@/types/customer'
 import { Call, CallCampaign, CallStatus, CampaignStatus } from '@/types/call'
 
-// Fix Supabase pooling URL
-if (process.env.POSTGRES_URL) {
-  process.env.POSTGRES_URL = process.env.POSTGRES_URL.replace('pooler.supabase.com', 'db.supabase.co').replace(':6543', ':5432')
+// Fix Supabase pooler URL for @vercel/postgres
+if (process.env.POSTGRES_URL && process.env.POSTGRES_URL.includes('pooler.supabase.com')) {
+  const originalUrl = process.env.POSTGRES_URL
+  
+  // Parse and reconstruct the URL properly
+  const match = originalUrl.match(/postgres:\/\/([^:]+):([^@]+)@([^:]+):(\d+)\/(.+)/)
+  
+  if (match) {
+    const [, user, pass, host, , dbname] = match
+    const directHost = host.replace('.pooler.supabase.com', '.supabase.co')
+    const cleanDb = dbname.split('?')[0] // Remove query params
+    
+    process.env.POSTGRES_URL = `postgres://${user}:${pass}@${directHost}:5432/${cleanDb}?sslmode=require`
+  }
 }
 
 class Database {
