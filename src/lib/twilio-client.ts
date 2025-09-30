@@ -253,7 +253,7 @@ export class TwilioClient {
       return {
         valid: lookup.valid || false,
         formatted: lookup.phoneNumber,
-        carrier: lookup.carrier?.name
+        carrier: undefined // Carrier info requires additional API calls in v2
       }
     } catch (error) {
       return { valid: false }
