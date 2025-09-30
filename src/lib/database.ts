@@ -38,8 +38,8 @@ class Database {
   private dbPath: string
   
   private constructor() {
-    // Ensure database directory exists
-    const dbDir = path.join(process.cwd(), 'database')
+    // Ensure database directory exists - use /tmp for serverless
+    const dbDir = path.join('/tmp', 'database')
     if (!fs.existsSync(dbDir)) {
       fs.mkdirSync(dbDir, { recursive: true })
     }
