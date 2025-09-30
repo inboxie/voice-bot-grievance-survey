@@ -265,7 +265,13 @@ export class TwilioClient {
    */
   async getAccountInfo(): Promise<{ balance: string; currency: string } | null> {
     try {
-      const account = await this.client.api.accounts(process.env.TWILIO_ACCOUNT_SID).fetch()
+      const accountSid = process.env.TWILIO_ACCOUNT_SID
+      if (!accountSid) {
+        console.error('TWILIO_ACCOUNT_SID not found')
+        return null
+      }
+      
+      const account = await this.client.api.accounts(accountSid).fetch()
       return {
         balance: account.balance,
         currency: account.currency || 'USD'
