@@ -2,7 +2,7 @@ import { sql } from '@vercel/postgres'
 import { ProcessedCustomer } from '@/types/customer'
 import { Call, CallCampaign, CallStatus, CampaignStatus } from '@/types/call'
 
-// Set connection string from environment
+// Fix Supabase pooling URL
 if (process.env.POSTGRES_URL) {
   process.env.POSTGRES_URL = process.env.POSTGRES_URL.replace('pooler.supabase.com', 'db.supabase.co').replace(':6543', ':5432')
 }
@@ -10,9 +10,7 @@ if (process.env.POSTGRES_URL) {
 class Database {
   private static instance: Database
   
-  private constructor() {
-    // Vercel Postgres uses environment variables automatically
-  }
+  private constructor() {}
   
   static getInstance(): Database {
     if (!Database.instance) {
@@ -21,15 +19,9 @@ class Database {
     return Database.instance
   }
   
-  async connect(): Promise<void> {
-    // No need to manually connect with @vercel/postgres
-  }
+  async connect(): Promise<void> {}
+  async disconnect(): Promise<void> {}
   
-  async disconnect(): Promise<void> {
-    // No need to manually disconnect with @vercel/postgres
-  }
-  
-  // Customer operations
   async insertCustomer(customer: ProcessedCustomer): Promise<void> {
     await sql`
       INSERT INTO customers 
@@ -73,7 +65,6 @@ class Database {
       )
   }
   
-  // Campaign operations
   async insertCampaign(campaign: CallCampaign): Promise<void> {
     await sql`
       INSERT INTO campaigns 
@@ -104,7 +95,6 @@ class Database {
     return result.rows[0] ? this.mapRowToCampaign(result.rows[0]) : null
   }
   
-  // Call operations
   async insertCall(call: Call): Promise<void> {
     await sql`
       INSERT INTO calls 
@@ -138,7 +128,6 @@ class Database {
       ORDER BY scheduled_at ASC 
       LIMIT ${limit}
     `
-    
     return result.rows.map(row => this.mapRowToCall(row))
   }
   
@@ -148,11 +137,9 @@ class Database {
       WHERE campaign_id = ${campaignId}
       ORDER BY scheduled_at DESC
     `
-    
     return result.rows.map(row => this.mapRowToCall(row))
   }
   
-  // Helper methods
   private mapRowToCustomer(row: any): ProcessedCustomer {
     return {
       id: row.id,
