@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
     }
     
     // Ensure uploads directory exists
-    const uploadsDir = path.join(process.cwd(), 'uploads')
+    const uploadsDir = path.join('/tmp', 'uploads')
     try {
       await mkdir(uploadsDir, { recursive: true })
     } catch (error) {
@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
       const customers = parseResult.customers.map(customer => ({
         name: customer.name,
         phone: customer.phone,
-        reason: customer.reason,
+        reason: customer.reason, // May be undefined
         matchedServices: customer.matchedServices || []
       }))
       
