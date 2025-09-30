@@ -1,9 +1,11 @@
-import { sql } from '@vercel/postgres'
+import { createClient } from '@supabase/supabase-js'
 import { ProcessedCustomer } from '@/types/customer'
 import { Call, CallCampaign, CallStatus, CampaignStatus } from '@/types/call'
 
-// Remove the URL conversion entirely - @vercel/postgres works with pooler URLs
-// The original pooler URL from Vercel env vars is correct
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://qocnqfblhtgppiauthta.supabase.co'
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+
+const supabase = createClient(supabaseUrl, supabaseKey)
 
 class Database {
   private static instance: Database
@@ -21,21 +23,27 @@ class Database {
   async disconnect(): Promise<void> {}
   
   async insertCustomer(customer: ProcessedCustomer): Promise<void> {
-    await sql`
-      INSERT INTO customers 
-      (id, name, phone, reason, email, account_number, service_type, date_left, 
-       matched_services, priority, call_eligible, created_at, updated_at)
-      VALUES (${customer.id}, ${customer.name}, ${customer.phone}, ${customer.reason || null}, 
-              ${customer.email || null}, ${customer.accountNumber || null}, 
-              ${customer.serviceType || null}, ${customer.dateLeft || null}, 
-              ${JSON.stringify(customer.matchedServices)}, ${customer.priority}, 
-              ${customer.callEligible}, ${customer.createdAt.toISOString()}, ${customer.updatedAt.toISOString()})
-      ON CONFLICT (phone) DO UPDATE SET
-        name = EXCLUDED.name,
-        reason = EXCLUDED.reason,
-        matched_services = EXCLUDED.matched_services,
-        updated_at = EXCLUDED.updated_at
-    `
+    const { error } = await supabase
+      .from('customers')
+      .upsert({
+        id: customer.id,
+        name: customer.name,
+        phone: customer.phone,
+        reason: customer.reason,
+        email: customer.email,
+        account_number: customer.accountNumber,
+        service_type: customer.serviceType,
+        date_left: customer.dateLeft,
+        matched_services: customer.matchedServices,
+        priority: customer.priority,
+        call_eligible: customer.callEligible,
+        created_at: customer.createdAt.toISOString(),
+        updated_at: customer.updatedAt.toISOString()
+      }, {
+        onConflict: 'phone'
+      })
+    
+    if (error) throw error
   }
   
   async insertCustomers(customers: ProcessedCustomer[]): Promise<void> {
@@ -45,18 +53,27 @@ class Database {
   }
   
   async getCustomerById(id: string): Promise<ProcessedCustomer | null> {
-    const result = await sql`SELECT * FROM customers WHERE id = ${id}`
-    return result.rows[0] ? this.mapRowToCustomer(result.rows[0]) : null
+    const { data, error } = await supabase
+      .from('customers')
+      .select('*')
+      .eq('id', id)
+      .single()
+    
+    if (error) throw error
+    return data ? this.mapRowToCustomer(data) : null
   }
   
   async getCustomersByServices(services: string[]): Promise<ProcessedCustomer[]> {
-    const result = await sql`
-      SELECT * FROM customers 
-      WHERE call_eligible = true 
-      ORDER BY priority DESC, created_at ASC
-    `
+    const { data, error } = await supabase
+      .from('customers')
+      .select('*')
+      .eq('call_eligible', true)
+      .order('priority', { ascending: false })
+      .order('created_at', { ascending: true })
     
-    return result.rows
+    if (error) throw error
+    
+    return (data || [])
       .map(row => this.mapRowToCustomer(row))
       .filter(customer => 
         customer.matchedServices.some(service => services.includes(service))
@@ -64,78 +81,112 @@ class Database {
   }
   
   async insertCampaign(campaign: CallCampaign): Promise<void> {
-    await sql`
-      INSERT INTO campaigns 
-      (id, name, status, total_calls, services, customer_count, 
-       max_concurrent_calls, retry_max_retries, retry_delay, 
-       retry_on_busy, retry_on_no_answer, retry_on_failed, 
-       bot_script, created_by, created_at, updated_at)
-      VALUES (${campaign.id}, ${campaign.name}, ${campaign.status}, ${campaign.totalCalls}, 
-              ${JSON.stringify(campaign.services)}, ${campaign.customerCount}, 
-              ${campaign.maxConcurrentCalls}, ${campaign.retrySettings.maxRetries}, 
-              ${campaign.retrySettings.retryDelay}, ${campaign.retrySettings.retryOnBusy}, 
-              ${campaign.retrySettings.retryOnNoAnswer}, ${campaign.retrySettings.retryOnFailed}, 
-              ${campaign.botScript}, ${campaign.createdBy || null}, 
-              ${campaign.createdAt.toISOString()}, ${campaign.updatedAt.toISOString()})
-    `
+    const { error } = await supabase
+      .from('campaigns')
+      .insert({
+        id: campaign.id,
+        name: campaign.name,
+        status: campaign.status,
+        total_calls: campaign.totalCalls,
+        services: campaign.services,
+        customer_count: campaign.customerCount,
+        max_concurrent_calls: campaign.maxConcurrentCalls,
+        retry_max_retries: campaign.retrySettings.maxRetries,
+        retry_delay: campaign.retrySettings.retryDelay,
+        retry_on_busy: campaign.retrySettings.retryOnBusy,
+        retry_on_no_answer: campaign.retrySettings.retryOnNoAnswer,
+        retry_on_failed: campaign.retrySettings.retryOnFailed,
+        bot_script: campaign.botScript,
+        created_by: campaign.createdBy,
+        created_at: campaign.createdAt.toISOString(),
+        updated_at: campaign.updatedAt.toISOString()
+      })
+    
+    if (error) throw error
   }
   
   async updateCampaignStatus(id: string, status: CampaignStatus): Promise<void> {
-    await sql`
-      UPDATE campaigns 
-      SET status = ${status}, updated_at = CURRENT_TIMESTAMP 
-      WHERE id = ${id}
-    `
+    const { error } = await supabase
+      .from('campaigns')
+      .update({ 
+        status,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id)
+    
+    if (error) throw error
   }
   
   async getCampaignById(id: string): Promise<CallCampaign | null> {
-    const result = await sql`SELECT * FROM campaigns WHERE id = ${id}`
-    return result.rows[0] ? this.mapRowToCampaign(result.rows[0]) : null
+    const { data, error } = await supabase
+      .from('campaigns')
+      .select('*')
+      .eq('id', id)
+      .single()
+    
+    if (error) throw error
+    return data ? this.mapRowToCampaign(data) : null
   }
   
   async insertCall(call: Call): Promise<void> {
-    await sql`
-      INSERT INTO calls 
-      (id, customer_id, customer_name, customer_phone, campaign_id, status, 
-       scheduled_at, max_retries, services, created_at, updated_at)
-      VALUES (${call.id}, ${call.customerId}, ${call.customerName}, ${call.customerPhone}, 
-              ${call.campaignId}, ${call.status}, ${call.scheduledAt.toISOString()}, ${call.maxRetries}, 
-              ${JSON.stringify(call.services)}, ${call.createdAt.toISOString()}, ${call.updatedAt.toISOString()})
-    `
+    const { error } = await supabase
+      .from('calls')
+      .insert({
+        id: call.id,
+        customer_id: call.customerId,
+        customer_name: call.customerName,
+        customer_phone: call.customerPhone,
+        campaign_id: call.campaignId,
+        status: call.status,
+        scheduled_at: call.scheduledAt.toISOString(),
+        max_retries: call.maxRetries,
+        services: call.services,
+        created_at: call.createdAt.toISOString(),
+        updated_at: call.updatedAt.toISOString()
+      })
+    
+    if (error) throw error
   }
   
   async updateCallStatus(id: string, status: CallStatus, updates?: Partial<Call>): Promise<void> {
-    await sql`
-      UPDATE calls 
-      SET status = ${status}, 
-          updated_at = CURRENT_TIMESTAMP,
-          twilio_sid = ${updates?.twilioSid || null},
-          started_at = ${updates?.startedAt ? updates.startedAt.toISOString() : null},
-          ended_at = ${updates?.endedAt ? updates.endedAt.toISOString() : null},
-          duration = ${updates?.duration || null},
-          transcript = ${updates?.transcript || null},
-          error_message = ${updates?.errorMessage || null}
-      WHERE id = ${id}
-    `
+    const { error } = await supabase
+      .from('calls')
+      .update({
+        status,
+        updated_at: new Date().toISOString(),
+        twilio_sid: updates?.twilioSid,
+        started_at: updates?.startedAt?.toISOString(),
+        ended_at: updates?.endedAt?.toISOString(),
+        duration: updates?.duration,
+        transcript: updates?.transcript,
+        error_message: updates?.errorMessage
+      })
+      .eq('id', id)
+    
+    if (error) throw error
   }
   
   async getCallsByStatus(status: CallStatus, limit = 100): Promise<Call[]> {
-    const result = await sql`
-      SELECT * FROM calls 
-      WHERE status = ${status}
-      ORDER BY scheduled_at ASC 
-      LIMIT ${limit}
-    `
-    return result.rows.map(row => this.mapRowToCall(row))
+    const { data, error } = await supabase
+      .from('calls')
+      .select('*')
+      .eq('status', status)
+      .order('scheduled_at', { ascending: true })
+      .limit(limit)
+    
+    if (error) throw error
+    return (data || []).map(row => this.mapRowToCall(row))
   }
   
   async getCallsByCampaign(campaignId: string): Promise<Call[]> {
-    const result = await sql`
-      SELECT * FROM calls 
-      WHERE campaign_id = ${campaignId}
-      ORDER BY scheduled_at DESC
-    `
-    return result.rows.map(row => this.mapRowToCall(row))
+    const { data, error } = await supabase
+      .from('calls')
+      .select('*')
+      .eq('campaign_id', campaignId)
+      .order('scheduled_at', { ascending: false })
+    
+    if (error) throw error
+    return (data || []).map(row => this.mapRowToCall(row))
   }
   
   private mapRowToCustomer(row: any): ProcessedCustomer {
