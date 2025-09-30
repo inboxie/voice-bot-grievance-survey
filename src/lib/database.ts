@@ -148,6 +148,21 @@ class Database {
     if (error) throw error
   }
   
+  async getCallById(id: string): Promise<Call | null> {
+    const { data, error } = await supabase
+      .from('calls')
+      .select('*')
+      .eq('id', id)
+      .single()
+    
+    if (error) {
+      console.error('Error fetching call:', error)
+      return null
+    }
+    
+    return data ? this.mapRowToCall(data) : null
+  }
+  
   async updateCallStatus(id: string, status: CallStatus, updates?: Partial<Call>): Promise<void> {
     const { error } = await supabase
       .from('calls')
