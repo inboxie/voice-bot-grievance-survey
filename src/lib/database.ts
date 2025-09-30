@@ -7,8 +7,14 @@ class Database {
   private pool: Pool | null = null
   
   private constructor() {
+    const connectionString = process.env.POSTGRES_URL || process.env.POSTGRES_URL_NON_POOLING
+    
+    if (!connectionString) {
+      throw new Error('No PostgreSQL connection string found in environment variables')
+    }
+    
     this.pool = new Pool({
-      connectionString: process.env.POSTGRES_URL,
+      connectionString,
       ssl: { rejectUnauthorized: false }
     })
   }
