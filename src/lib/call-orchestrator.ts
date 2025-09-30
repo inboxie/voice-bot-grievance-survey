@@ -161,7 +161,7 @@ export class CallOrchestrator {
         callId: call.id,
         campaignId: call.campaignId,
         customerName: customer.name,
-        customerReason: customer.reason,
+        customerReason: customer.reason || '',
         services: call.services,
         bankName: process.env.BANK_NAME || 'Your Bank',
         botName: process.env.BOT_NAME || 'Customer Care Assistant',
