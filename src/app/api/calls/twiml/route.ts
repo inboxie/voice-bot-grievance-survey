@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
         const customer = await db.getCustomerById(call.customerId)
         if (customer) {
           customerName = customer.name
-          customerReason = customer.reason
+          customerReason = customer.reason || ''
         }
       }
     }
@@ -117,24 +117,35 @@ function generateOpeningTwiML(customerName: string, customerReason: string): str
   const bankName = process.env.BANK_NAME || 'Your Bank'
   const botName = process.env.BOT_NAME || 'Customer Care Assistant'
   
-  // Customize opening based on reason
-  let contextualMessage = 'regarding your recent experience with our bank'
-  const lowerReason = customerReason.toLowerCase()
+  // Generate opening based on whether we have a reason or not
+  let openingMessage: string
   
-  if (lowerReason.includes('credit card') || lowerReason.includes('card')) {
-    contextualMessage = 'regarding your recent credit card experience'
-  } else if (lowerReason.includes('account') || lowerReason.includes('banking')) {
-    contextualMessage = 'regarding your account experience with us'
-  } else if (lowerReason.includes('loan') || lowerReason.includes('mortgage')) {
-    contextualMessage = 'regarding your lending experience'
-  } else if (lowerReason.includes('service') || lowerReason.includes('staff')) {
-    contextualMessage = 'regarding your service experience'
+  if (customerReason && customerReason.trim()) {
+    // We have a reason - customize based on it
+    let contextualMessage = 'regarding your recent experience with our bank'
+    const lowerReason = customerReason.toLowerCase()
+    
+    if (lowerReason.includes('credit card') || lowerReason.includes('card')) {
+      contextualMessage = 'regarding your recent credit card experience'
+    } else if (lowerReason.includes('account') || lowerReason.includes('banking')) {
+      contextualMessage = 'regarding your account experience with us'
+    } else if (lowerReason.includes('loan') || lowerReason.includes('mortgage')) {
+      contextualMessage = 'regarding your lending experience'
+    } else if (lowerReason.includes('service') || lowerReason.includes('staff')) {
+      contextualMessage = 'regarding your service experience'
+    }
+    
+    openingMessage = `Hello ${customerName}, this is ${botName} calling from ${bankName}. 
+      I hope I'm reaching you at a good time. I'm calling ${contextualMessage}. 
+      We truly value your feedback and would love to understand your experience better 
+      so we can improve our services. Do you have a few minutes to share your thoughts with me?`
+  } else {
+    // No reason provided - general outreach
+    openingMessage = `Hello ${customerName}, this is ${botName} calling from ${bankName}. 
+      I hope I'm reaching you at a good time. We noticed you recently made some changes to your account with us, 
+      and we truly value your feedback. We'd love to understand your experience and hear your thoughts 
+      so we can continue to improve our services. Do you have a few minutes to chat with me?`
   }
-  
-  const openingMessage = `Hello ${customerName}, this is ${botName} calling from ${bankName}. 
-    I hope I'm reaching you at a good time. I'm calling ${contextualMessage}. 
-    We truly value your feedback and would love to understand your experience better 
-    so we can improve our services. Do you have a few minutes to share your thoughts with me?`
   
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
