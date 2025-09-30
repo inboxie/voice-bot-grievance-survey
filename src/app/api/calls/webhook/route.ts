@@ -159,7 +159,7 @@ async function handleSpecificCallEvents(webhookData: TwilioWebhookPayload): Prom
     }
     
     // Handle answered calls
-    if (CallStatus === 'answered') {
+    if (CallStatus === 'in-progress') {
       console.log(`Call ${CallSid} was answered`)
     }
     
