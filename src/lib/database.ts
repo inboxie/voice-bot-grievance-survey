@@ -1,282 +1,323 @@
-import { createClient } from '@supabase/supabase-js'
-import { ProcessedCustomer } from '@/types/customer'
-import { Call, CallCampaign, CallStatus, CampaignStatus } from '@/types/call'
+import OpenAI from 'openai'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://qocnqfblhtgppiauthta.supabase.co'
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+export interface ConversationContext {
+  callId: string
+  campaignId: string
+  customerName: string
+  customerReason: string
+  services: string[]
+  bankName: string
+  botName: string
+  conversationHistory: Array<{
+    role: 'system' | 'user' | 'assistant'
+    content: string
+    timestamp: Date
+  }>
+}
 
-const supabase = createClient(supabaseUrl, supabaseKey)
+export interface AIResponse {
+  message: string
+  sentiment: 'positive' | 'negative' | 'neutral'
+  keyIssues: string[]
+  shouldEndCall: boolean
+  summary?: string
+  resolution?: string
+}
 
-class Database {
-  private static instance: Database
+export class OpenAIClient {
+  private client: OpenAI
   
-  private constructor() {}
-  
-  static getInstance(): Database {
-    if (!Database.instance) {
-      Database.instance = new Database()
+  constructor() {
+    const apiKey = process.env.OPENAI_API_KEY
+    if (!apiKey) {
+      throw new Error('OpenAI API key is required')
     }
-    return Database.instance
+    
+    this.client = new OpenAI({ apiKey })
   }
   
-  async connect(): Promise<void> {}
-  async disconnect(): Promise<void> {}
-  
-  async insertCustomer(customer: ProcessedCustomer): Promise<void> {
-    const { error } = await supabase
-      .from('customers')
-      .upsert({
-        id: customer.id,
-        name: customer.name,
-        phone: customer.phone,
-        reason: customer.reason,
-        email: customer.email,
-        account_number: customer.accountNumber,
-        service_type: customer.serviceType,
-        date_left: customer.dateLeft,
-        matched_services: customer.matchedServices,
-        priority: customer.priority,
-        call_eligible: customer.callEligible,
-        created_at: customer.createdAt.toISOString(),
-        updated_at: customer.updatedAt.toISOString()
-      }, {
-        onConflict: 'phone'
+  /**
+   * Generate AI response for voice conversation
+   */
+  async generateResponse(
+    customerInput: string,
+    context: ConversationContext
+  ): Promise<AIResponse> {
+    try {
+      const systemPrompt = this.buildSystemPrompt(context)
+      
+      // Add customer input to conversation history
+      context.conversationHistory.push({
+        role: 'user',
+        content: customerInput,
+        timestamp: new Date()
       })
-    
-    if (error) throw error
-  }
-  
-  async insertCustomers(customers: ProcessedCustomer[]): Promise<void> {
-    for (const customer of customers) {
-      await this.insertCustomer(customer)
-    }
-  }
-  
-  async getCustomerById(id: string): Promise<ProcessedCustomer | null> {
-    const { data, error } = await supabase
-      .from('customers')
-      .select('*')
-      .eq('id', id)
-      .single()
-    
-    if (error) throw error
-    return data ? this.mapRowToCustomer(data) : null
-  }
-  
-  async getCustomersByServices(services: string[]): Promise<ProcessedCustomer[]> {
-    const { data, error } = await supabase
-      .from('customers')
-      .select('*')
-      .eq('call_eligible', true)
-      .order('priority', { ascending: false })
-      .order('created_at', { ascending: true })
-    
-    if (error) throw error
-    
-    return (data || [])
-      .map(row => this.mapRowToCustomer(row))
-      .filter(customer => 
-        customer.matchedServices.some(service => services.includes(service))
-      )
-  }
-  
-  async insertCampaign(campaign: CallCampaign): Promise<void> {
-    const { error } = await supabase
-      .from('campaigns')
-      .insert({
-        id: campaign.id,
-        name: campaign.name,
-        status: campaign.status,
-        total_calls: campaign.totalCalls,
-        services: campaign.services,
-        customer_count: campaign.customerCount,
-        max_concurrent_calls: campaign.maxConcurrentCalls,
-        retry_max_retries: campaign.retrySettings.maxRetries,
-        retry_delay: campaign.retrySettings.retryDelay,
-        retry_on_busy: campaign.retrySettings.retryOnBusy,
-        retry_on_no_answer: campaign.retrySettings.retryOnNoAnswer,
-        retry_on_failed: campaign.retrySettings.retryOnFailed,
-        bot_script: campaign.botScript,
-        created_by: campaign.createdBy,
-        created_at: campaign.createdAt.toISOString(),
-        updated_at: campaign.updatedAt.toISOString()
+      
+      const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+        { role: 'system', content: systemPrompt },
+        ...context.conversationHistory.map(msg => ({
+          role: msg.role as 'system' | 'user' | 'assistant',
+          content: msg.content
+        }))
+      ]
+      
+      const completion = await this.client.chat.completions.create({
+        model: 'gpt-4o',
+        messages,
+        temperature: 0.7,
+        max_tokens: 300,
+        presence_penalty: 0.3,
+        frequency_penalty: 0.3
       })
-    
-    if (error) throw error
-  }
-  
-  async updateCampaignStatus(id: string, status: CampaignStatus): Promise<void> {
-    const { error } = await supabase
-      .from('campaigns')
-      .update({ 
-        status,
-        updated_at: new Date().toISOString()
+      
+      const aiMessage = completion.choices[0]?.message?.content || "I understand. Could you tell me more about that?"
+      
+      // Add AI response to conversation history
+      context.conversationHistory.push({
+        role: 'assistant',
+        content: aiMessage,
+        timestamp: new Date()
       })
-      .eq('id', id)
-    
-    if (error) throw error
+      
+      // Analyze the conversation
+      const analysis = await this.analyzeConversation(context)
+      
+      return {
+        message: aiMessage,
+        sentiment: analysis.sentiment,
+        keyIssues: analysis.keyIssues,
+        shouldEndCall: analysis.shouldEndCall,
+        summary: analysis.shouldEndCall ? analysis.summary : undefined,
+        resolution: analysis.resolution
+      }
+      
+    } catch (error) {
+      console.error('OpenAI API error:', error)
+      return {
+        message: "I apologize, I'm having some technical difficulties. Could you please repeat what you just said?",
+        sentiment: 'neutral',
+        keyIssues: [],
+        shouldEndCall: false
+      }
+    }
   }
   
-  async getCampaignById(id: string): Promise<CallCampaign | null> {
-    const { data, error } = await supabase
-      .from('campaigns')
-      .select('*')
-      .eq('id', id)
-      .single()
+  /**
+   * Build system prompt for the AI assistant
+   */
+  private buildSystemPrompt(context: ConversationContext): string {
+    const { customerName, customerReason, bankName, botName, services } = context
     
-    if (error) throw error
-    return data ? this.mapRowToCampaign(data) : null
+    let reasonContext = ''
+    if (customerReason && customerReason.trim()) {
+      reasonContext = `You are calling because: "${customerReason}".`
+    } else {
+      reasonContext = `You are calling because they recently made changes to their account (related to: ${services.join(', ')}). Your goal is to discover WHY they made these changes.`
+    }
+    
+    return `You are ${botName}, an empathetic and professional customer service AI from ${bankName}. You are conducting a voice call with ${customerName}. ${reasonContext}
+
+Your primary goals:
+1. Listen empathetically and make the customer feel heard
+2. Understand their specific concerns and issues - discover the real reasons behind their actions
+3. Gather detailed feedback about their experience
+4. DO NOT try to solve problems or offer solutions - just listen and understand
+5. Keep responses conversational and natural for voice interaction
+6. Be concise - responses should be 1-3 sentences maximum
+7. Ask follow-up questions to get deeper insights
+
+Services context: ${services.join(', ')}
+
+Guidelines:
+- Always be empathetic and understanding
+- Use natural, conversational language suitable for voice
+- Ask one question at a time
+- Acknowledge their feelings before asking follow-ups
+- If they seem upset, validate their emotions first
+- Keep responses under 50 words when possible
+- Use pauses and natural speech patterns
+- Don't be overly formal or robotic
+
+Example responses:
+- "I'm really sorry to hear about that experience. That must have been frustrating."
+- "Thank you for sharing that with me. Can you tell me more about what happened?"
+- "I understand completely. How did that make you feel?"
+- "What was it that led you to make that decision?"
+
+Remember: Your job is to LISTEN, UNDERSTAND, and DISCOVER the reasons - not to fix or solve anything.`
   }
   
-  async insertCall(call: Call): Promise<void> {
-    const { error } = await supabase
-      .from('calls')
-      .insert({
-        id: call.id,
-        customer_id: call.customerId,
-        customer_name: call.customerName,
-        customer_phone: call.customerPhone,
-        campaign_id: call.campaignId,
-        status: call.status,
-        scheduled_at: call.scheduledAt.toISOString(),
-        max_retries: call.maxRetries,
-        services: call.services,
-        created_at: call.createdAt.toISOString(),
-        updated_at: call.updatedAt.toISOString()
+  /**
+   * Analyze conversation for sentiment, issues, and completion
+   */
+  private async analyzeConversation(context: ConversationContext): Promise<{
+    sentiment: 'positive' | 'negative' | 'neutral'
+    keyIssues: string[]
+    shouldEndCall: boolean
+    summary?: string
+    resolution?: string
+  }> {
+    try {
+      const conversationText = context.conversationHistory
+        .filter(msg => msg.role !== 'system')
+        .map(msg => `${msg.role}: ${msg.content}`)
+        .join('\n')
+      
+      const analysisPrompt = `Analyze this customer service conversation and provide:
+
+1. Overall sentiment (positive/negative/neutral)
+2. Key issues mentioned by the customer (list of specific problems)
+3. Whether the call should end (true if customer seems satisfied with being heard, or conversation has gone on too long)
+4. If call should end, provide a brief summary
+5. Any resolution or next steps mentioned
+
+Conversation:
+${conversationText}
+
+Respond in JSON format:
+{
+  "sentiment": "positive|negative|neutral",
+  "keyIssues": ["issue1", "issue2"],
+  "shouldEndCall": true|false,
+  "summary": "brief summary if ending",
+  "resolution": "any resolution mentioned"
+}`
+      
+      const completion = await this.client.chat.completions.create({
+        model: 'gpt-4o',
+        messages: [{ role: 'user', content: analysisPrompt }],
+        temperature: 0.1,
+        max_tokens: 500
       })
-    
-    if (error) throw error
-  }
-  
-  async getCallById(id: string): Promise<Call | null> {
-    const { data, error } = await supabase
-      .from('calls')
-      .select('*')
-      .eq('id', id)
-      .single()
-    
-    if (error) {
-      console.error('Error fetching call:', error)
-      return null
+      
+      const response = completion.choices[0]?.message?.content
+      if (!response) throw new Error('No analysis response')
+      
+      const analysis = JSON.parse(response)
+      
+      return {
+        sentiment: analysis.sentiment || 'neutral',
+        keyIssues: analysis.keyIssues || [],
+        shouldEndCall: analysis.shouldEndCall || false,
+        summary: analysis.summary,
+        resolution: analysis.resolution
+      }
+      
+    } catch (error) {
+      console.error('Conversation analysis failed:', error)
+      return {
+        sentiment: 'neutral',
+        keyIssues: [],
+        shouldEndCall: context.conversationHistory.length > 20, // End after 20 exchanges
+        summary: 'Conversation completed'
+      }
     }
-    
-    return data ? this.mapRowToCall(data) : null
   }
   
-  async updateCallStatus(id: string, status: CallStatus, updates?: Partial<Call>): Promise<void> {
-    const { error } = await supabase
-      .from('calls')
-      .update({
-        status,
-        updated_at: new Date().toISOString(),
-        twilio_sid: updates?.twilioSid,
-        started_at: updates?.startedAt?.toISOString(),
-        ended_at: updates?.endedAt?.toISOString(),
-        duration: updates?.duration,
-        transcript: updates?.transcript,
-        error_message: updates?.errorMessage
+  /**
+   * Generate call summary after completion
+   */
+  async generateCallSummary(context: ConversationContext): Promise<{
+    summary: string
+    sentiment: 'positive' | 'negative' | 'neutral'
+    keyIssues: string[]
+    recommendations: string[]
+  }> {
+    try {
+      const conversationText = context.conversationHistory
+        .filter(msg => msg.role !== 'system')
+        .map(msg => `${msg.role}: ${msg.content}`)
+        .join('\n')
+      
+      const summaryPrompt = `Create a comprehensive summary of this customer feedback call:
+
+Customer: ${context.customerName}
+${context.customerReason ? `Original Reason for Leaving: ${context.customerReason}` : 'Purpose: Discover why customer left'}
+Services Affected: ${context.services.join(', ')}
+
+Conversation:
+${conversationText}
+
+Provide a detailed analysis in JSON format:
+{
+  "summary": "2-3 paragraph summary of the key points discussed",
+  "sentiment": "overall customer sentiment (positive/negative/neutral)",
+  "keyIssues": ["specific issues mentioned by customer"],
+  "recommendations": ["actionable recommendations for the bank based on feedback"]
+}
+
+Focus on:
+- What the customer's main concerns were
+- How they felt about their experience
+- Specific problems they encountered
+- What could have been done better
+- Any positive feedback they shared`
+      
+      const completion = await this.client.chat.completions.create({
+        model: 'gpt-4o',
+        messages: [{ role: 'user', content: summaryPrompt }],
+        temperature: 0.3,
+        max_tokens: 800
       })
-      .eq('id', id)
-    
-    if (error) throw error
-  }
-  
-  async getCallsByStatus(status: CallStatus, limit = 100): Promise<Call[]> {
-    const { data, error } = await supabase
-      .from('calls')
-      .select('*')
-      .eq('status', status)
-      .order('scheduled_at', { ascending: true })
-      .limit(limit)
-    
-    if (error) throw error
-    return (data || []).map(row => this.mapRowToCall(row))
-  }
-  
-  async getCallsByCampaign(campaignId: string): Promise<Call[]> {
-    const { data, error } = await supabase
-      .from('calls')
-      .select('*')
-      .eq('campaign_id', campaignId)
-      .order('scheduled_at', { ascending: false })
-    
-    if (error) throw error
-    return (data || []).map(row => this.mapRowToCall(row))
-  }
-  
-  private mapRowToCustomer(row: any): ProcessedCustomer {
-    return {
-      id: row.id,
-      name: row.name,
-      phone: row.phone,
-      reason: row.reason,
-      email: row.email,
-      accountNumber: row.account_number,
-      serviceType: row.service_type,
-      dateLeft: row.date_left,
-      matchedServices: row.matched_services || [],
-      priority: row.priority,
-      callEligible: row.call_eligible,
-      createdAt: new Date(row.created_at),
-      updatedAt: new Date(row.updated_at)
+      
+      const response = completion.choices[0]?.message?.content
+      if (!response) throw new Error('No summary response')
+      
+      const summary = JSON.parse(response)
+      
+      return {
+        summary: summary.summary || 'Call completed successfully',
+        sentiment: summary.sentiment || 'neutral',
+        keyIssues: summary.keyIssues || [],
+        recommendations: summary.recommendations || []
+      }
+      
+    } catch (error) {
+      console.error('Summary generation failed:', error)
+      return {
+        summary: `Customer ${context.customerName} provided feedback about their experience.${context.customerReason ? ` Reason mentioned: ${context.customerReason}` : ''}`,
+        sentiment: 'neutral',
+        keyIssues: context.customerReason ? [context.customerReason] : [],
+        recommendations: ['Follow up with customer service improvements']
+      }
     }
   }
   
-  private mapRowToCampaign(row: any): CallCampaign {
-    return {
-      id: row.id,
-      name: row.name,
-      status: row.status,
-      totalCalls: row.total_calls,
-      completedCalls: row.completed_calls,
-      successfulCalls: row.successful_calls,
-      failedCalls: row.failed_calls,
-      services: row.services || [],
-      customerCount: row.customer_count,
-      startedAt: new Date(row.started_at || row.created_at),
-      completedAt: row.completed_at ? new Date(row.completed_at) : undefined,
-      estimatedDuration: row.estimated_duration,
-      maxConcurrentCalls: row.max_concurrent_calls,
-      retrySettings: {
-        maxRetries: row.retry_max_retries,
-        retryDelay: row.retry_delay,
-        retryOnBusy: row.retry_on_busy,
-        retryOnNoAnswer: row.retry_on_no_answer,
-        retryOnFailed: row.retry_on_failed
-      },
-      botScript: row.bot_script,
-      createdBy: row.created_by,
-      createdAt: new Date(row.created_at),
-      updatedAt: new Date(row.updated_at)
-    }
+  /**
+   * Generate closing message for the call
+   */
+  generateClosingMessage(context: ConversationContext, summary?: string): string {
+    const { customerName, bankName } = context
+    
+    const closingMessages = [
+      `Thank you so much for taking the time to speak with me today, ${customerName}. Your feedback is incredibly valuable to us at ${bankName}, and I want you to know that we've heard everything you've shared. We truly appreciate your honesty.`,
+      
+      `${customerName}, I really appreciate you sharing your experience with me. Your feedback helps us understand where we can do better. Thank you for giving us this opportunity to listen.`,
+      
+      `Thank you, ${customerName}, for being so open about your experience. We value your feedback tremendously, and I want you to know that everything you've shared will be passed along to help us improve our services.`
+    ]
+    
+    // Rotate through different closing messages
+    const messageIndex = Math.floor(Math.random() * closingMessages.length)
+    return closingMessages[messageIndex]
   }
   
-  private mapRowToCall(row: any): Call {
-    return {
-      id: row.id,
-      customerId: row.customer_id,
-      customerName: row.customer_name,
-      customerPhone: row.customer_phone,
-      campaignId: row.campaign_id,
-      status: row.status,
-      twilioSid: row.twilio_sid,
-      scheduledAt: new Date(row.scheduled_at),
-      startedAt: row.started_at ? new Date(row.started_at) : undefined,
-      endedAt: row.ended_at ? new Date(row.ended_at) : undefined,
-      duration: row.duration,
-      transcript: row.transcript,
-      summary: row.summary,
-      sentiment: row.sentiment,
-      keyIssues: row.key_issues || [],
-      resolution: row.resolution,
-      errorMessage: row.error_message,
-      retryCount: row.retry_count,
-      maxRetries: row.max_retries,
-      services: row.services || [],
-      createdAt: new Date(row.created_at),
-      updatedAt: new Date(row.updated_at)
-    }
+  /**
+   * Convert text to speech-optimized format
+   */
+  optimizeForSpeech(text: string): string {
+    return text
+      // Add pauses for better speech flow
+      .replace(/\. /g, '. <break time="0.5s"/> ')
+      .replace(/\? /g, '? <break time="0.3s"/> ')
+      .replace(/! /g, '! <break time="0.3s"/> ')
+      // Ensure proper pronunciation of common banking terms
+      .replace(/\bAPI\b/g, 'A P I')
+      .replace(/\bATM\b/g, 'A T M')
+      .replace(/\bID\b/g, 'I D')
+      // Slow down phone numbers and account numbers
+      .replace(/(\d{3,})/g, '<prosody rate="slow">$1</prosody>')
   }
 }
 
-export default Database
+export default OpenAIClient

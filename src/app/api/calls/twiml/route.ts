@@ -42,14 +42,13 @@ export async function POST(request: NextRequest) {
     let customerName = 'Valued Customer'
     let customerReason = ''
     
-    if (callId) {
-      const calls = await db.getCallsByCampaign(campaignId || '')
-      const call = calls.find(c => c.id === callId)
+    if (callId && campaignId) {
+      const call = await db.getCallById(callId)
       
       if (call) {
+        customerName = call.customerName
         const customer = await db.getCustomerById(call.customerId)
         if (customer) {
-          customerName = customer.name
           customerReason = customer.reason || ''
         }
       }
@@ -58,7 +57,7 @@ export async function POST(request: NextRequest) {
     // Handle different stages of the conversation
     if (!speechResult && !digits) {
       // Initial call - generate opening message
-      const openingTwiML = generateOpeningTwiML(customerName, customerReason)
+      const openingTwiML = generateOpeningTwiML(customerName, customerReason, callId || '', campaignId || '')
       return new NextResponse(openingTwiML, {
         headers: { 'Content-Type': 'application/xml' }
       })
@@ -67,7 +66,8 @@ export async function POST(request: NextRequest) {
     // Handle customer response
     if (speechResult && callId) {
       const conversationTwiML = await handleCustomerResponse(
-        callId, 
+        callId,
+        campaignId || '',
         speechResult, 
         customerName,
         customerReason
@@ -113,7 +113,7 @@ export async function POST(request: NextRequest) {
 /**
  * Generate opening TwiML for the call
  */
-function generateOpeningTwiML(customerName: string, customerReason: string): string {
+function generateOpeningTwiML(customerName: string, customerReason: string, callId: string, campaignId: string): string {
   const bankName = process.env.BANK_NAME || 'Your Bank'
   const botName = process.env.BOT_NAME || 'Customer Care Assistant'
   
@@ -158,7 +158,7 @@ function generateOpeningTwiML(customerName: string, customerReason: string): str
         speechTimeout="3"
         language="en-US"
         hints="yes,no,sure,okay,not now,busy,call later"
-        action="/api/calls/twiml"
+        action="/api/calls/twiml?callId=${callId}&campaignId=${campaignId}"
         method="POST">
         <Say voice="alice" language="en-US">Please go ahead and share your thoughts.</Say>
     </Gather>
@@ -176,7 +176,8 @@ function generateOpeningTwiML(customerName: string, customerReason: string): str
  * Handle customer speech response using AI
  */
 async function handleCustomerResponse(
-  callId: string, 
+  callId: string,
+  campaignId: string,
   speechResult: string, 
   customerName: string,
   customerReason: string
@@ -193,10 +194,10 @@ async function handleCustomerResponse(
       return generateClosingTwiML(aiResponse, customerName)
     }
     
-    // Continue conversation
+    // Continue conversation - IMPORTANT: pass callId and campaignId
     return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice" language="en-US">${aiResponse}</Say>
+    <Say voice="alice" language="en-US">${aiResponse.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</Say>
     
     <!-- Continue listening -->
     <Gather 
@@ -204,7 +205,7 @@ async function handleCustomerResponse(
         timeout="15" 
         speechTimeout="3"
         language="en-US"
-        action="/api/calls/twiml"
+        action="/api/calls/twiml?callId=${callId}&campaignId=${campaignId}"
         method="POST">
         <Say voice="alice" language="en-US">Please continue.</Say>
     </Gather>
@@ -305,7 +306,7 @@ function checkIfShouldEndCall(speechResult: string, aiResponse: string): boolean
   
   return endIndicators.some(indicator => lowerSpeech.includes(indicator)) ||
          aiEndIndicators.some(indicator => lowerAI.includes(indicator)) ||
-         speechResult.trim().length < 10 // Very short responses might indicate disinterest
+         speechResult.trim().length < 10
 }
 
 /**
@@ -314,7 +315,7 @@ function checkIfShouldEndCall(speechResult: string, aiResponse: string): boolean
 function generateClosingTwiML(message: string, customerName: string): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice" language="en-US">${message}</Say>
+    <Say voice="alice" language="en-US">${message.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</Say>
     <Say voice="alice" language="en-US">
         Have a wonderful day, ${customerName}, and thank you again for your valuable feedback.
     </Say>
