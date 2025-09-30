@@ -272,9 +272,11 @@ export class TwilioClient {
       }
       
       const account = await this.client.api.accounts(accountSid).fetch()
+      const balanceData = await this.client.balance.fetch()
+      
       return {
-        balance: account.balance,
-        currency: account.currency || 'USD'
+        balance: balanceData.balance || '0',
+        currency: balanceData.currency || 'USD'
       }
     } catch (error) {
       console.error('Failed to fetch account info:', error)
