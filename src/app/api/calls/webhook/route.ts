@@ -1,29 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { CallOrchestrator } from '@/lib/call-orchestrator'
 import { TwilioWebhookPayload } from '@/types/api'
-import crypto from 'crypto'
 
 /**
  * Twilio webhook handler for call status updates
  */
 export async function POST(request: NextRequest) {
   try {
-    // Get raw body for signature validation
+    // Get raw body
     const body = await request.text()
     const contentType = request.headers.get('content-type')
     
-    // Validate Twilio signature if auth token is available
-    if (process.env.TWILIO_AUTH_TOKEN) {
-      const twilioSignature = request.headers.get('x-twilio-signature')
-      const url = request.url
-      
-      if (twilioSignature && !validateTwilioSignature(body, twilioSignature, url)) {
-        console.warn('Invalid Twilio signature')
-        return NextResponse.json({
-          error: 'Invalid signature'
-        }, { status: 403 })
-      }
-    }
+    console.log('Twilio webhook received')
     
     // Parse form data from Twilio
     let webhookData: TwilioWebhookPayload
@@ -37,7 +25,7 @@ export async function POST(request: NextRequest) {
     }
     
     // Log webhook for debugging
-    console.log('Twilio webhook received:', {
+    console.log('Twilio webhook data:', {
       CallSid: webhookData.CallSid,
       CallStatus: webhookData.CallStatus,
       From: webhookData.From,
@@ -75,10 +63,7 @@ export async function POST(request: NextRequest) {
     
     // Return empty TwiML response on error
     const errorTwiML = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Say voice="alice">We apologize for the technical difficulty. Please try again later.</Say>
-    <Hangup />
-</Response>`
+<Response></Response>`
     
     return new NextResponse(errorTwiML, {
       status: 200, // Always return 200 to Twilio to prevent retries
@@ -106,30 +91,8 @@ function parseFormData(formData: URLSearchParams): TwilioWebhookPayload {
     RecordingSid: formData.get('RecordingSid') || undefined,
     TranscriptionText: formData.get('TranscriptionText') || undefined,
     TranscriptionStatus: formData.get('TranscriptionStatus') || undefined,
-    // Custom parameters we might have added
     campaignId: formData.get('campaignId') || undefined,
     customerId: formData.get('customerId') || undefined
-  }
-}
-
-/**
- * Validate Twilio webhook signature for security
- */
-function validateTwilioSignature(body: string, signature: string, url: string): boolean {
-  try {
-    const authToken = process.env.TWILIO_AUTH_TOKEN
-    if (!authToken) return true // Skip validation if no token
-    
-    // Create expected signature
-    const expectedSignature = crypto
-      .createHmac('sha1', authToken)
-      .update(Buffer.from(url + body, 'utf-8'))
-      .digest('base64')
-    
-    return signature === expectedSignature
-  } catch (error) {
-    console.error('Signature validation error:', error)
-    return false
   }
 }
 
@@ -172,33 +135,8 @@ async function handleSpecificCallEvents(webhookData: TwilioWebhookPayload): Prom
  * Generate TwiML response based on call status
  */
 function generateTwiMLResponse(webhookData: TwilioWebhookPayload): string {
-  const { CallStatus, CallSid } = webhookData
-  
-  // For most status updates, we don't need to return TwiML
-  // TwiML is mainly needed for call control during the call
-  
-  switch (CallStatus) {
-    case 'ringing':
-      // Call is ringing, no action needed
-      return '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
-      
-    case 'in-progress':
-      // Call was answered - the main call flow is handled by TwiML endpoint
-      return '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
-      
-    case 'completed':
-      // Call completed, no action needed
-      return '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
-      
-    case 'failed':
-    case 'busy':
-    case 'no-answer':
-      // Call failed, no action needed (retry logic handled elsewhere)
-      return '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
-      
-    default:
-      return '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
-  }
+  // For status callbacks, return empty response
+  return '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
 }
 
 /**
@@ -247,7 +185,6 @@ async function handleMachineDetection(request: NextRequest) {
 
 // Handle GET requests (for webhook verification)
 export async function GET(request: NextRequest) {
-  // Some webhook services send GET requests for verification
   const url = new URL(request.url)
   const challenge = url.searchParams.get('challenge')
   
@@ -257,7 +194,8 @@ export async function GET(request: NextRequest) {
   
   return NextResponse.json({
     message: 'Twilio webhook endpoint',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    status: 'active'
   })
 }
 
