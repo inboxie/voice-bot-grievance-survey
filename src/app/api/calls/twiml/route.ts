@@ -11,6 +11,8 @@ export async function POST(request: NextRequest) {
     const callId = url.searchParams.get('callId')
     const campaignId = url.searchParams.get('campaignId')
     
+    console.log('TwiML request received:', { callId, campaignId })
+    
     // Parse form data from Twilio
     const body = await request.text()
     const formData = new URLSearchParams(body)
@@ -23,7 +25,7 @@ export async function POST(request: NextRequest) {
     const speechResult = formData.get('SpeechResult')
     const confidence = formData.get('Confidence')
     
-    console.log('TwiML request:', {
+    console.log('TwiML parsed data:', {
       callId,
       campaignId,
       callSid,
@@ -43,28 +45,36 @@ export async function POST(request: NextRequest) {
     let customerReason = ''
     
     if (callId && campaignId) {
-      const call = await db.getCallById(callId)
-      
-      if (call) {
-        customerName = call.customerName
-        const customer = await db.getCustomerById(call.customerId)
-        if (customer) {
-          customerReason = customer.reason || ''
+      try {
+        const call = await db.getCallById(callId)
+        
+        if (call) {
+          customerName = call.customerName
+          const customer = await db.getCustomerById(call.customerId)
+          if (customer) {
+            customerReason = customer.reason || ''
+          }
+        } else {
+          console.log(`Call not found for callId: ${callId}`)
         }
+      } catch (error) {
+        console.error('Error fetching call data:', error)
       }
     }
     
     // Handle different stages of the conversation
     if (!speechResult && !digits) {
       // Initial call - generate opening message
+      console.log('Generating opening TwiML for:', customerName)
       const openingTwiML = generateOpeningTwiML(customerName, customerReason, callId || '', campaignId || '')
       return new NextResponse(openingTwiML, {
-        headers: { 'Content-Type': 'application/xml' }
+        headers: { 'Content-Type': 'text/xml' }
       })
     }
     
     // Handle customer response
     if (speechResult && callId) {
+      console.log('Handling customer response:', speechResult.substring(0, 100))
       const conversationTwiML = await handleCustomerResponse(
         callId,
         campaignId || '',
@@ -74,12 +84,13 @@ export async function POST(request: NextRequest) {
       )
       
       return new NextResponse(conversationTwiML, {
-        headers: { 'Content-Type': 'application/xml' }
+        headers: { 'Content-Type': 'text/xml' }
       })
     }
     
     // Handle DTMF digits (if customer presses keys)
     if (digits) {
+      console.log('Handling DTMF digits:', digits)
       const dtmfTwiML = handleDTMFResponse(digits, customerName)
       return new NextResponse(dtmfTwiML, {
         headers: { 'Content-Type': 'application/xml' }
@@ -87,6 +98,7 @@ export async function POST(request: NextRequest) {
     }
     
     // Fallback TwiML
+    console.log('Using fallback TwiML')
     const fallbackTwiML = generateFallbackTwiML()
     return new NextResponse(fallbackTwiML, {
       headers: { 'Content-Type': 'application/xml' }
@@ -151,19 +163,17 @@ function generateOpeningTwiML(customerName: string, customerReason: string, call
 <Response>
     <Say voice="alice" language="en-US">${openingMessage}</Say>
     
-    <!-- Listen for customer response -->
     <Gather 
         input="speech" 
         timeout="10" 
         speechTimeout="3"
         language="en-US"
         hints="yes,no,sure,okay,not now,busy,call later"
-        action="/api/calls/twiml?callId=${callId}&campaignId=${campaignId}"
+        action="https://voice-bot-grievance-survey.vercel.app/api/calls/twiml?callId=${callId}&campaignId=${campaignId}"
         method="POST">
         <Say voice="alice" language="en-US">Please go ahead and share your thoughts.</Say>
     </Gather>
     
-    <!-- If no response, try again -->
     <Say voice="alice" language="en-US">
         I didn't hear a response. If now isn't a good time, I completely understand. 
         Please feel free to call us back when it's more convenient. Thank you.
@@ -194,23 +204,21 @@ async function handleCustomerResponse(
       return generateClosingTwiML(aiResponse, customerName)
     }
     
-    // Continue conversation - IMPORTANT: pass callId and campaignId
+    // Continue conversation
     return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Say voice="alice" language="en-US">${aiResponse.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</Say>
     
-    <!-- Continue listening -->
     <Gather 
         input="speech" 
         timeout="15" 
         speechTimeout="3"
         language="en-US"
-        action="/api/calls/twiml?callId=${callId}&campaignId=${campaignId}"
+        action="https://voice-bot-grievance-survey.vercel.app/api/calls/twiml?callId=${callId}&campaignId=${campaignId}"
         method="POST">
         <Say voice="alice" language="en-US">Please continue.</Say>
     </Gather>
     
-    <!-- Handle silence -->
     <Say voice="alice" language="en-US">
         Thank you so much for sharing your feedback with me today, ${customerName}. 
         Your input is incredibly valuable to us. Have a wonderful day.
@@ -248,7 +256,7 @@ function handleDTMFResponse(digits: string, customerName: string): string {
         timeout="30" 
         speechTimeout="3"
         language="en-US"
-        action="/api/calls/twiml"
+        action="https://voice-bot-grievance-survey.vercel.app/api/calls/twiml"
         method="POST">
     </Gather>
     <Hangup />
@@ -277,7 +285,7 @@ function handleDTMFResponse(digits: string, customerName: string): string {
         timeout="10" 
         speechTimeout="2"
         language="en-US"
-        action="/api/calls/twiml"
+        action="https://voice-bot-grievance-survey.vercel.app/api/calls/twiml"
         method="POST">
     </Gather>
     <Hangup />
