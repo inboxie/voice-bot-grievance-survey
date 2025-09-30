@@ -2,6 +2,11 @@ import { sql } from '@vercel/postgres'
 import { ProcessedCustomer } from '@/types/customer'
 import { Call, CallCampaign, CallStatus, CampaignStatus } from '@/types/call'
 
+// Set connection string from environment
+if (process.env.POSTGRES_URL) {
+  process.env.POSTGRES_URL = process.env.POSTGRES_URL.replace('pooler.supabase.com', 'db.supabase.co').replace(':6543', ':5432')
+}
+
 class Database {
   private static instance: Database
   
