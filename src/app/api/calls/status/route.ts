@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { CallOrchestrator } from '@/lib/call-orchestrator'
-import Database from '@/lib/database'
+import DatabaseClass from '@/lib/database'
 import { ApiResponse, CallStatusResponse, PaginatedResponse } from '@/types/api'
 import { Call, CallStatus } from '@/types/call'
 
@@ -27,13 +27,12 @@ export async function GET(request: NextRequest) {
       }, { status: 400 })
     }
     
-    const db = Database.getInstance()
+    const db = DatabaseClass.getInstance()
     await db.connect()
     
     // Handle single call status request
     if (callId) {
-      const calls = await db.getCallsByCampaign('')
-      const call = calls.find(c => c.id === callId)
+      const call = await db.getCallById(callId)
       
       if (!call) {
         return NextResponse.json<ApiResponse<null>>({
@@ -173,7 +172,7 @@ export async function PUT(request: NextRequest) {
       }, { status: 400 })
     }
     
-    const db = Database.getInstance()
+    const db = DatabaseClass.getInstance()
     await db.connect()
     
     // Update call status
@@ -236,7 +235,7 @@ export async function DELETE(request: NextRequest) {
       })
     } else {
       // Cancel specific calls
-      const db = Database.getInstance()
+      const db = DatabaseClass.getInstance()
       await db.connect()
       
       let cancelledCount = 0
@@ -340,7 +339,7 @@ function sortCalls(calls: Call[], sortBy: string, sortOrder: string): Call[] {
  * Get all calls with limit
  */
 async function getAllCalls(limit: number): Promise<Call[]> {
-  const db = Database.getInstance()
+  const db = DatabaseClass.getInstance()
   
   // Get calls from all statuses
   const statuses: CallStatus[] = ['pending', 'calling', 'ringing', 'answered', 'completed', 'failed', 'cancelled', 'voicemail', 'retry']
@@ -358,7 +357,7 @@ async function getAllCalls(limit: number): Promise<Call[]> {
  * Get campaign summary
  */
 async function getCampaignSummary(campaignId: string) {
-  const db = Database.getInstance()
+  const db = DatabaseClass.getInstance()
   const campaign = await db.getCampaignById(campaignId)
   const calls = await db.getCallsByCampaign(campaignId)
   
@@ -377,7 +376,7 @@ async function getCampaignSummary(campaignId: string) {
  * Get overall summary statistics
  */
 async function getOverallSummary() {
-  const db = Database.getInstance()
+  const db = DatabaseClass.getInstance()
   
   const pendingCalls = await db.getCallsByStatus('pending', 1000)
   const completedCalls = await db.getCallsByStatus('completed', 1000)
