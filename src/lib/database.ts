@@ -14,12 +14,20 @@ class Database {
       throw new Error('No PostgreSQL connection string found in environment variables')
     }
     
-    this.pool = new Pool({
-      connectionString,
-      ssl: {
-        rejectUnauthorized: false
+    // Parse connection string to add SSL config
+    const config: any = {
+      connectionString
+    }
+    
+    // Force SSL for Supabase on Vercel
+    if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
+      config.ssl = {
+        rejectUnauthorized: false,
+        minVersion: 'TLSv1.2'
       }
-    })
+    }
+    
+    this.pool = new Pool(config)
   }
   
   static getInstance(): Database {
