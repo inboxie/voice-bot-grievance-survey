@@ -15,7 +15,10 @@ class Database {
     }
     
     this.pool = new Pool({
-      connectionString
+      connectionString,
+      ssl: {
+        rejectUnauthorized: false
+      }
     })
   }
   
