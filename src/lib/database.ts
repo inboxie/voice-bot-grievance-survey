@@ -34,7 +34,7 @@ class Database {
               ${customer.email || null}, ${customer.accountNumber || null}, 
               ${customer.serviceType || null}, ${customer.dateLeft || null}, 
               ${JSON.stringify(customer.matchedServices)}, ${customer.priority}, 
-              ${customer.callEligible}, ${customer.createdAt}, ${customer.updatedAt})
+              ${customer.callEligible}, ${customer.createdAt.toISOString()}, ${customer.updatedAt.toISOString()})
       ON CONFLICT (phone) DO UPDATE SET
         name = EXCLUDED.name,
         reason = EXCLUDED.reason,
@@ -82,7 +82,7 @@ class Database {
               ${campaign.retrySettings.retryDelay}, ${campaign.retrySettings.retryOnBusy}, 
               ${campaign.retrySettings.retryOnNoAnswer}, ${campaign.retrySettings.retryOnFailed}, 
               ${campaign.botScript}, ${campaign.createdBy || null}, 
-              ${campaign.createdAt}, ${campaign.updatedAt})
+              ${campaign.createdAt.toISOString()}, ${campaign.updatedAt.toISOString()})
     `
   }
   
@@ -106,30 +106,19 @@ class Database {
       (id, customer_id, customer_name, customer_phone, campaign_id, status, 
        scheduled_at, max_retries, services, created_at, updated_at)
       VALUES (${call.id}, ${call.customerId}, ${call.customerName}, ${call.customerPhone}, 
-              ${call.campaignId}, ${call.status}, ${call.scheduledAt}, ${call.maxRetries}, 
-              ${JSON.stringify(call.services)}, ${call.createdAt}, ${call.updatedAt})
+              ${call.campaignId}, ${call.status}, ${call.scheduledAt.toISOString()}, ${call.maxRetries}, 
+              ${JSON.stringify(call.services)}, ${call.createdAt.toISOString()}, ${call.updatedAt.toISOString()})
     `
   }
   
   async updateCallStatus(id: string, status: CallStatus, updates?: Partial<Call>): Promise<void> {
-    const values: any = { status, updated_at: new Date() }
-    
-    if (updates?.twilioSid) values.twilio_sid = updates.twilioSid
-    if (updates?.startedAt) values.started_at = updates.startedAt
-    if (updates?.endedAt) values.ended_at = updates.endedAt
-    if (updates?.duration !== undefined) values.duration = updates.duration
-    if (updates?.transcript) values.transcript = updates.transcript
-    if (updates?.errorMessage) values.error_message = updates.errorMessage
-    
-    const setClause = Object.keys(values).map(key => `${key} = ?`).join(', ')
-    
     await sql`
       UPDATE calls 
       SET status = ${status}, 
           updated_at = CURRENT_TIMESTAMP,
           twilio_sid = ${updates?.twilioSid || null},
-          started_at = ${updates?.startedAt || null},
-          ended_at = ${updates?.endedAt || null},
+          started_at = ${updates?.startedAt ? updates.startedAt.toISOString() : null},
+          ended_at = ${updates?.endedAt ? updates.endedAt.toISOString() : null},
           duration = ${updates?.duration || null},
           transcript = ${updates?.transcript || null},
           error_message = ${updates?.errorMessage || null}
