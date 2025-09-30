@@ -1,33 +1,12 @@
-import { Pool } from 'pg'
+import { sql } from '@vercel/postgres'
 import { ProcessedCustomer } from '@/types/customer'
 import { Call, CallCampaign, CallStatus, CampaignStatus } from '@/types/call'
 
 class Database {
   private static instance: Database
-  private pool: Pool | null = null
   
   private constructor() {
-    // Use non-pooling URL for better compatibility with Vercel serverless
-    const connectionString = process.env.POSTGRES_URL_NON_POOLING || process.env.POSTGRES_URL
-    
-    if (!connectionString) {
-      throw new Error('No PostgreSQL connection string found in environment variables')
-    }
-    
-    // Parse connection string to add SSL config
-    const config: any = {
-      connectionString
-    }
-    
-    // Force SSL for Supabase on Vercel
-    if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
-      config.ssl = {
-        rejectUnauthorized: false,
-        minVersion: 'TLSv1.2'
-      }
-    }
-    
-    this.pool = new Pool(config)
+    // Vercel Postgres uses environment variables automatically
   }
   
   static getInstance(): Database {
@@ -38,48 +17,30 @@ class Database {
   }
   
   async connect(): Promise<void> {
-    if (!this.pool) {
-      throw new Error('Database pool not initialized')
-    }
-    // Tables are created via Supabase SQL editor
+    // No need to manually connect with @vercel/postgres
   }
   
   async disconnect(): Promise<void> {
-    if (this.pool) {
-      await this.pool.end()
-      this.pool = null
-    }
+    // No need to manually disconnect with @vercel/postgres
   }
   
   // Customer operations
   async insertCustomer(customer: ProcessedCustomer): Promise<void> {
-    if (!this.pool) throw new Error('Database not connected')
-    
-    await this.pool.query(`
+    await sql`
       INSERT INTO customers 
       (id, name, phone, reason, email, account_number, service_type, date_left, 
        matched_services, priority, call_eligible, created_at, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      VALUES (${customer.id}, ${customer.name}, ${customer.phone}, ${customer.reason || null}, 
+              ${customer.email || null}, ${customer.accountNumber || null}, 
+              ${customer.serviceType || null}, ${customer.dateLeft || null}, 
+              ${JSON.stringify(customer.matchedServices)}, ${customer.priority}, 
+              ${customer.callEligible}, ${customer.createdAt}, ${customer.updatedAt})
       ON CONFLICT (phone) DO UPDATE SET
         name = EXCLUDED.name,
         reason = EXCLUDED.reason,
         matched_services = EXCLUDED.matched_services,
         updated_at = EXCLUDED.updated_at
-    `, [
-      customer.id,
-      customer.name,
-      customer.phone,
-      customer.reason || null,
-      customer.email || null,
-      customer.accountNumber || null,
-      customer.serviceType || null,
-      customer.dateLeft || null,
-      JSON.stringify(customer.matchedServices),
-      customer.priority,
-      customer.callEligible,
-      customer.createdAt,
-      customer.updatedAt
-    ])
+    `
   }
   
   async insertCustomers(customers: ProcessedCustomer[]): Promise<void> {
@@ -89,20 +50,16 @@ class Database {
   }
   
   async getCustomerById(id: string): Promise<ProcessedCustomer | null> {
-    if (!this.pool) throw new Error('Database not connected')
-    
-    const result = await this.pool.query('SELECT * FROM customers WHERE id = $1', [id])
+    const result = await sql`SELECT * FROM customers WHERE id = ${id}`
     return result.rows[0] ? this.mapRowToCustomer(result.rows[0]) : null
   }
   
   async getCustomersByServices(services: string[]): Promise<ProcessedCustomer[]> {
-    if (!this.pool) throw new Error('Database not connected')
-    
-    const result = await this.pool.query(`
+    const result = await sql`
       SELECT * FROM customers 
       WHERE call_eligible = true 
       ORDER BY priority DESC, created_at ASC
-    `)
+    `
     
     return result.rows
       .map(row => this.mapRowToCustomer(row))
@@ -113,149 +70,90 @@ class Database {
   
   // Campaign operations
   async insertCampaign(campaign: CallCampaign): Promise<void> {
-    if (!this.pool) throw new Error('Database not connected')
-    
-    await this.pool.query(`
+    await sql`
       INSERT INTO campaigns 
       (id, name, status, total_calls, services, customer_count, 
        max_concurrent_calls, retry_max_retries, retry_delay, 
        retry_on_busy, retry_on_no_answer, retry_on_failed, 
        bot_script, created_by, created_at, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-    `, [
-      campaign.id,
-      campaign.name,
-      campaign.status,
-      campaign.totalCalls,
-      JSON.stringify(campaign.services),
-      campaign.customerCount,
-      campaign.maxConcurrentCalls,
-      campaign.retrySettings.maxRetries,
-      campaign.retrySettings.retryDelay,
-      campaign.retrySettings.retryOnBusy,
-      campaign.retrySettings.retryOnNoAnswer,
-      campaign.retrySettings.retryOnFailed,
-      campaign.botScript,
-      campaign.createdBy || null,
-      campaign.createdAt,
-      campaign.updatedAt
-    ])
+      VALUES (${campaign.id}, ${campaign.name}, ${campaign.status}, ${campaign.totalCalls}, 
+              ${JSON.stringify(campaign.services)}, ${campaign.customerCount}, 
+              ${campaign.maxConcurrentCalls}, ${campaign.retrySettings.maxRetries}, 
+              ${campaign.retrySettings.retryDelay}, ${campaign.retrySettings.retryOnBusy}, 
+              ${campaign.retrySettings.retryOnNoAnswer}, ${campaign.retrySettings.retryOnFailed}, 
+              ${campaign.botScript}, ${campaign.createdBy || null}, 
+              ${campaign.createdAt}, ${campaign.updatedAt})
+    `
   }
   
   async updateCampaignStatus(id: string, status: CampaignStatus): Promise<void> {
-    if (!this.pool) throw new Error('Database not connected')
-    
-    await this.pool.query(`
+    await sql`
       UPDATE campaigns 
-      SET status = $1, updated_at = CURRENT_TIMESTAMP 
-      WHERE id = $2
-    `, [status, id])
+      SET status = ${status}, updated_at = CURRENT_TIMESTAMP 
+      WHERE id = ${id}
+    `
   }
   
   async getCampaignById(id: string): Promise<CallCampaign | null> {
-    if (!this.pool) throw new Error('Database not connected')
-    
-    const result = await this.pool.query('SELECT * FROM campaigns WHERE id = $1', [id])
+    const result = await sql`SELECT * FROM campaigns WHERE id = ${id}`
     return result.rows[0] ? this.mapRowToCampaign(result.rows[0]) : null
   }
   
   // Call operations
   async insertCall(call: Call): Promise<void> {
-    if (!this.pool) throw new Error('Database not connected')
-    
-    await this.pool.query(`
+    await sql`
       INSERT INTO calls 
       (id, customer_id, customer_name, customer_phone, campaign_id, status, 
        scheduled_at, max_retries, services, created_at, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-    `, [
-      call.id,
-      call.customerId,
-      call.customerName,
-      call.customerPhone,
-      call.campaignId,
-      call.status,
-      call.scheduledAt,
-      call.maxRetries,
-      JSON.stringify(call.services),
-      call.createdAt,
-      call.updatedAt
-    ])
+      VALUES (${call.id}, ${call.customerId}, ${call.customerName}, ${call.customerPhone}, 
+              ${call.campaignId}, ${call.status}, ${call.scheduledAt}, ${call.maxRetries}, 
+              ${JSON.stringify(call.services)}, ${call.createdAt}, ${call.updatedAt})
+    `
   }
   
   async updateCallStatus(id: string, status: CallStatus, updates?: Partial<Call>): Promise<void> {
-    if (!this.pool) throw new Error('Database not connected')
+    const values: any = { status, updated_at: new Date() }
     
-    const fields = ['status = $1', 'updated_at = CURRENT_TIMESTAMP']
-    const values: any[] = [status]
-    let paramCount = 2
+    if (updates?.twilioSid) values.twilio_sid = updates.twilioSid
+    if (updates?.startedAt) values.started_at = updates.startedAt
+    if (updates?.endedAt) values.ended_at = updates.endedAt
+    if (updates?.duration !== undefined) values.duration = updates.duration
+    if (updates?.transcript) values.transcript = updates.transcript
+    if (updates?.errorMessage) values.error_message = updates.errorMessage
     
-    if (updates?.twilioSid) {
-      fields.push(`twilio_sid = $${paramCount}`)
-      values.push(updates.twilioSid)
-      paramCount++
-    }
+    const setClause = Object.keys(values).map(key => `${key} = ?`).join(', ')
     
-    if (updates?.startedAt) {
-      fields.push(`started_at = $${paramCount}`)
-      values.push(updates.startedAt)
-      paramCount++
-    }
-    
-    if (updates?.endedAt) {
-      fields.push(`ended_at = $${paramCount}`)
-      values.push(updates.endedAt)
-      paramCount++
-    }
-    
-    if (updates?.duration !== undefined) {
-      fields.push(`duration = $${paramCount}`)
-      values.push(updates.duration)
-      paramCount++
-    }
-    
-    if (updates?.transcript) {
-      fields.push(`transcript = $${paramCount}`)
-      values.push(updates.transcript)
-      paramCount++
-    }
-    
-    if (updates?.errorMessage) {
-      fields.push(`error_message = $${paramCount}`)
-      values.push(updates.errorMessage)
-      paramCount++
-    }
-    
-    values.push(id)
-    
-    await this.pool.query(`
+    await sql`
       UPDATE calls 
-      SET ${fields.join(', ')}
-      WHERE id = $${paramCount}
-    `, values)
+      SET status = ${status}, 
+          updated_at = CURRENT_TIMESTAMP,
+          twilio_sid = ${updates?.twilioSid || null},
+          started_at = ${updates?.startedAt || null},
+          ended_at = ${updates?.endedAt || null},
+          duration = ${updates?.duration || null},
+          transcript = ${updates?.transcript || null},
+          error_message = ${updates?.errorMessage || null}
+      WHERE id = ${id}
+    `
   }
   
   async getCallsByStatus(status: CallStatus, limit = 100): Promise<Call[]> {
-    if (!this.pool) throw new Error('Database not connected')
-    
-    const result = await this.pool.query(`
+    const result = await sql`
       SELECT * FROM calls 
-      WHERE status = $1 
+      WHERE status = ${status}
       ORDER BY scheduled_at ASC 
-      LIMIT $2
-    `, [status, limit])
+      LIMIT ${limit}
+    `
     
     return result.rows.map(row => this.mapRowToCall(row))
   }
   
   async getCallsByCampaign(campaignId: string): Promise<Call[]> {
-    if (!this.pool) throw new Error('Database not connected')
-    
-    const result = await this.pool.query(`
+    const result = await sql`
       SELECT * FROM calls 
-      WHERE campaign_id = $1 
+      WHERE campaign_id = ${campaignId}
       ORDER BY scheduled_at DESC
-    `, [campaignId])
+    `
     
     return result.rows.map(row => this.mapRowToCall(row))
   }
