@@ -109,7 +109,7 @@ export async function POST(request: NextRequest) {
     
     const errorTwiML = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice" language="en-US">
+    <Say voice="Polly.Joanna-Neural" language="en-US">
         I apologize, but we're experiencing technical difficulties. 
         Thank you for your time, and please feel free to call our customer service line directly.
     </Say>
@@ -161,20 +161,20 @@ function generateOpeningTwiML(customerName: string, customerReason: string, call
   
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice" language="en-US">${openingMessage}</Say>
+    <Say voice="Polly.Joanna-Neural" language="en-US">${openingMessage}</Say>
     
     <Gather 
         input="speech" 
-        timeout="10" 
-        speechTimeout="3"
+        timeout="30"
+        speechTimeout="auto"
         language="en-US"
         hints="yes,no,sure,okay,not now,busy,call later"
         action="https://voice-bot-grievance-survey.vercel.app/api/calls/twiml?callId=${callId}&amp;campaignId=${campaignId}"
         method="POST">
-        <Say voice="alice" language="en-US">Please go ahead and share your thoughts.</Say>
+        <Say voice="Polly.Joanna-Neural" language="en-US">Please go ahead and share your thoughts.</Say>
     </Gather>
     
-    <Say voice="alice" language="en-US">
+    <Say voice="Polly.Joanna-Neural" language="en-US">
         I didn't hear a response. If now isn't a good time, I completely understand. 
         Please feel free to call us back when it's more convenient. Thank you.
     </Say>
@@ -207,19 +207,19 @@ async function handleCustomerResponse(
     // Continue conversation
     return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice" language="en-US">${aiResponse.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</Say>
+    <Say voice="Polly.Joanna-Neural" language="en-US">${aiResponse.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</Say>
     
     <Gather 
         input="speech" 
-        timeout="15" 
-        speechTimeout="3"
+        timeout="30"
+        speechTimeout="auto"
         language="en-US"
         action="https://voice-bot-grievance-survey.vercel.app/api/calls/twiml?callId=${callId}&amp;campaignId=${campaignId}"
         method="POST">
-        <Say voice="alice" language="en-US">Please continue.</Say>
+        <Say voice="Polly.Joanna-Neural" language="en-US">Please continue.</Say>
     </Gather>
     
-    <Say voice="alice" language="en-US">
+    <Say voice="Polly.Joanna-Neural" language="en-US">
         Thank you so much for sharing your feedback with me today, ${customerName}. 
         Your input is incredibly valuable to us. Have a wonderful day.
     </Say>
@@ -231,7 +231,7 @@ async function handleCustomerResponse(
     
     return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice" language="en-US">
+    <Say voice="Polly.Joanna-Neural" language="en-US">
         I understand completely. Thank you for taking the time to speak with me, ${customerName}. 
         Your feedback is very important to us.
     </Say>
@@ -248,13 +248,13 @@ function handleDTMFResponse(digits: string, customerName: string): string {
     case '1':
       return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice" language="en-US">
+    <Say voice="Polly.Joanna-Neural" language="en-US">
         Great! I'd love to hear about your experience. Please tell me what happened.
     </Say>
     <Gather 
         input="speech" 
         timeout="30" 
-        speechTimeout="3"
+        speechTimeout="auto"
         language="en-US"
         action="https://voice-bot-grievance-survey.vercel.app/api/calls/twiml"
         method="POST">
@@ -266,7 +266,7 @@ function handleDTMFResponse(digits: string, customerName: string): string {
     case '9':
       return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice" language="en-US">
+    <Say voice="Polly.Joanna-Neural" language="en-US">
         I completely understand, ${customerName}. Thank you for your time. 
         Please feel free to call us back when it's more convenient.
     </Say>
@@ -276,14 +276,14 @@ function handleDTMFResponse(digits: string, customerName: string): string {
     default:
       return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice" language="en-US">
+    <Say voice="Polly.Joanna-Neural" language="en-US">
         I'm sorry, I didn't understand that selection. 
         If you'd like to continue, just start speaking. Otherwise, I'll end the call.
     </Say>
     <Gather 
         input="speech" 
-        timeout="10" 
-        speechTimeout="2"
+        timeout="30"
+        speechTimeout="auto"
         language="en-US"
         action="https://voice-bot-grievance-survey.vercel.app/api/calls/twiml"
         method="POST">
@@ -323,8 +323,8 @@ function checkIfShouldEndCall(speechResult: string, aiResponse: string): boolean
 function generateClosingTwiML(message: string, customerName: string): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice" language="en-US">${message.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</Say>
-    <Say voice="alice" language="en-US">
+    <Say voice="Polly.Joanna-Neural" language="en-US">${message.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</Say>
+    <Say voice="Polly.Joanna-Neural" language="en-US">
         Have a wonderful day, ${customerName}, and thank you again for your valuable feedback.
     </Say>
     <Hangup />
@@ -337,7 +337,7 @@ function generateClosingTwiML(message: string, customerName: string): string {
 function generateFallbackTwiML(): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice" language="en-US">
+    <Say voice="Polly.Joanna-Neural" language="en-US">
         Thank you for your time today. If you'd like to share feedback about your banking experience, 
         please feel free to call our customer service line directly. Have a great day.
     </Say>
@@ -355,7 +355,7 @@ export async function GET(request: NextRequest) {
   if (test === 'true') {
     const testTwiML = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice" language="en-US">
+    <Say voice="Polly.Joanna-Neural" language="en-US">
         This is a test of the TwiML endpoint. The system is working correctly.
     </Say>
     <Hangup />
