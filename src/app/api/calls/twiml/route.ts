@@ -156,7 +156,7 @@ function generateOpeningTwiML(customerName: string, customerReason: string, call
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Say voice="Polly.Joanna-Neural" language="en-US">${openingMessage}</Say>
-    
+    <Pause length="1"/>
     <Gather 
         input="speech" 
         timeout="30"
@@ -168,7 +168,7 @@ function generateOpeningTwiML(customerName: string, customerReason: string, call
     </Gather>
     
     <Say voice="Polly.Joanna-Neural" language="en-US">
-        I didn't hear a response. If now isn't a good time, feel free to call us back. Thank you.
+        I didn't hear a response. Thank you for your time.
     </Say>
     <Hangup />
 </Response>`
@@ -200,7 +200,7 @@ async function handleCustomerResponse(
     return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Say voice="Polly.Joanna-Neural" language="en-US">${aiResponse.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</Say>
-    
+    <Pause length="1"/>
     <Gather 
         input="speech" 
         timeout="30"
@@ -211,7 +211,7 @@ async function handleCustomerResponse(
     </Gather>
     
     <Say voice="Polly.Joanna-Neural" language="en-US">
-        Thank you so much for sharing your feedback, ${customerName}. Have a wonderful day.
+        Thank you for sharing your feedback, ${customerName}. Have a wonderful day.
     </Say>
     <Hangup />
 </Response>`
