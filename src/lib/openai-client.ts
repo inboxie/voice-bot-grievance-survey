@@ -1,357 +1,430 @@
-import OpenAI from 'openai'
+import { v4 as uuidv4 } from 'uuid'
+import Database from './database'
+import { TwilioClient } from './twilio-client'
+import OpenAIClient, { ConversationContext } from './openai-client'
+import { ProcessedCustomer } from '@/types/customer'
+import { Call, CallCampaign, CallStatus, CampaignStatus } from '@/types/call'
 
-export interface ConversationContext {
-  callId: string
-  campaignId: string
-  customerName: string
-  customerReason: string
+export interface CampaignConfig {
+  name: string
   services: string[]
-  bankName: string
-  botName: string
-  conversationHistory: Array<{
-    role: 'system' | 'user' | 'assistant'
-    content: string
-    timestamp: Date
-  }>
+  customers: ProcessedCustomer[]
+  maxConcurrentCalls?: number
+  retrySettings?: {
+    maxRetries: number
+    retryDelay: number
+    retryOnBusy: boolean
+    retryOnNoAnswer: boolean
+    retryOnFailed: boolean
+  }
+  botScript?: string
 }
 
-export interface AIResponse {
-  message: string
-  sentiment: 'positive' | 'negative' | 'neutral'
-  keyIssues: string[]
-  shouldEndCall: boolean
-  summary?: string
-  resolution?: string
-}
-
-export class OpenAIClient {
-  private client: OpenAI
+export class CallOrchestrator {
+  private db: Database
+  private twilioClient: TwilioClient
+  private openaiClient: OpenAIClient
   
   constructor() {
-    const apiKey = process.env.OPENAI_API_KEY
-    if (!apiKey) {
-      throw new Error('OpenAI API key is required')
-    }
-    
-    this.client = new OpenAI({ apiKey })
+    this.db = Database.getInstance()
+    this.twilioClient = new TwilioClient()
+    this.openaiClient = new OpenAIClient()
   }
   
-  /**
-   * Generate AI response for voice conversation
-   */
-  async generateResponse(
-    customerInput: string,
-    context: ConversationContext
-  ): Promise<AIResponse> {
+  async startCampaign(config: CampaignConfig): Promise<{ campaignId: string; callsScheduled: number }> {
+    await this.db.connect()
+    
+    const campaign: CallCampaign = {
+      id: uuidv4(),
+      name: config.name,
+      status: 'running',
+      totalCalls: config.customers.length,
+      completedCalls: 0,
+      successfulCalls: 0,
+      failedCalls: 0,
+      services: config.services,
+      customerCount: config.customers.length,
+      startedAt: new Date(),
+      maxConcurrentCalls: config.maxConcurrentCalls || 5,
+      retrySettings: config.retrySettings || {
+        maxRetries: 3,
+        retryDelay: 5,
+        retryOnBusy: true,
+        retryOnNoAnswer: true,
+        retryOnFailed: true
+      },
+      botScript: config.botScript || '',
+      createdAt: new Date(),
+      updatedAt: new Date()
+    }
+    
+    await this.db.insertCampaign(campaign)
+    await this.db.insertCustomers(config.customers)
+    
+    const calls: Call[] = config.customers.map(customer => ({
+      id: uuidv4(),
+      customerId: customer.id,
+      customerName: customer.name,
+      customerPhone: customer.phone,
+      campaignId: campaign.id,
+      status: 'pending' as CallStatus,
+      scheduledAt: new Date(),
+      retryCount: 0,
+      maxRetries: campaign.retrySettings.maxRetries,
+      services: customer.matchedServices,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    }))
+    
+    for (const call of calls) {
+      await this.db.insertCall(call)
+    }
+    
+    this.processCampaignCalls(campaign.id)
+    
+    return {
+      campaignId: campaign.id,
+      callsScheduled: calls.length
+    }
+  }
+  
+  private async processCampaignCalls(campaignId: string): Promise<void> {
+    const campaign = await this.db.getCampaignById(campaignId)
+    if (!campaign || campaign.status !== 'running') return
+    
+    const pendingCalls = await this.db.getCallsByStatus('pending')
+    const campaignCalls = pendingCalls.filter(call => call.campaignId === campaignId)
+    
+    const concurrentLimit = campaign.maxConcurrentCalls
+    let activeCount = 0
+    
+    for (const call of campaignCalls) {
+      if (activeCount >= concurrentLimit) {
+        setTimeout(() => {
+          this.processCampaignCalls(campaignId)
+        }, 10000)
+        break
+      }
+      
+      activeCount++
+      this.processIndividualCall(call)
+        .finally(() => {
+          activeCount--
+          setTimeout(() => {
+            this.processCampaignCalls(campaignId)
+          }, 2000)
+        })
+    }
+  }
+  
+  private async processIndividualCall(call: Call): Promise<void> {
     try {
-      const systemPrompt = this.buildSystemPrompt(context)
-      
-      // Add customer input to conversation history
-      context.conversationHistory.push({
-        role: 'user',
-        content: customerInput,
-        timestamp: new Date()
+      await this.db.updateCallStatus(call.id, 'calling', {
+        startedAt: new Date()
       })
       
-      const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-        { role: 'system', content: systemPrompt },
-        ...context.conversationHistory.map(msg => ({
-          role: msg.role as 'system' | 'user' | 'assistant',
-          content: msg.content
-        }))
-      ]
+      const customer = await this.db.getCustomerById(call.customerId)
+      if (!customer) {
+        await this.db.updateCallStatus(call.id, 'failed', {
+          errorMessage: 'Customer data not found'
+        })
+        return
+      }
       
-      const completion = await this.client.chat.completions.create({
-        model: 'gpt-4o',
-        messages,
-        temperature: 0.7,
-        max_tokens: 300,
-        presence_penalty: 0.3,
-        frequency_penalty: 0.3
+      const formattedPhone = TwilioClient.formatPhoneNumber(call.customerPhone)
+      
+      // Create conversation context
+      const context: ConversationContext = {
+        callId: call.id,
+        campaignId: call.campaignId,
+        customerName: customer.name,
+        customerReason: customer.reason || '',
+        services: call.services,
+        bankName: process.env.BANK_NAME || 'Your Bank',
+        botName: process.env.BOT_NAME || 'Customer Care Assistant',
+        conversationHistory: []
+      }
+      
+      // Save context to database
+      await this.db.insertConversation(context)
+      console.log(`[processIndividualCall] Saved conversation context for callId: ${call.id}`)
+      
+      const twilioResult = await this.twilioClient.makeCall({
+        ...call,
+        customerPhone: formattedPhone
       })
       
-      const aiMessage = completion.choices[0]?.message?.content || "I understand. Could you tell me more about that?"
-      
-      // Add AI response to conversation history
-      context.conversationHistory.push({
-        role: 'assistant',
-        content: aiMessage,
-        timestamp: new Date()
-      })
-      
-      // Analyze the conversation
-      const analysis = await this.analyzeConversation(context)
-      
-      return {
-        message: aiMessage,
-        sentiment: analysis.sentiment,
-        keyIssues: analysis.keyIssues,
-        shouldEndCall: analysis.shouldEndCall,
-        summary: analysis.shouldEndCall ? analysis.summary : undefined,
-        resolution: analysis.resolution
+      if (twilioResult.success && twilioResult.twilioSid) {
+        await this.db.updateCallStatus(call.id, 'ringing', {
+          twilioSid: twilioResult.twilioSid
+        })
+      } else {
+        await this.db.updateCallStatus(call.id, 'failed', {
+          errorMessage: twilioResult.error
+        })
+        await this.db.deleteConversation(call.id)
       }
       
     } catch (error) {
-      console.error('OpenAI API error:', error)
-      return {
-        message: "I apologize, I'm having some technical difficulties. Could you please repeat what you just said?",
-        sentiment: 'neutral',
-        keyIssues: [],
-        shouldEndCall: false
-      }
+      console.error(`Failed to process call ${call.id}:`, error)
+      await this.db.updateCallStatus(call.id, 'failed', {
+        errorMessage: error instanceof Error ? error.message : 'Unknown error'
+      })
     }
   }
   
-  /**
-   * Build system prompt for the AI assistant
-   */
-  private buildSystemPrompt(context: ConversationContext): string {
-    const { customerName, customerReason, bankName, botName, services } = context
+  async handleTwilioWebhook(payload: any): Promise<void> {
+    const { CallSid, CallStatus, Duration } = payload
     
-    let reasonContext = ''
-    if (customerReason && customerReason.trim()) {
-      reasonContext = `You are calling because: "${customerReason}".`
-    } else {
-      reasonContext = `You are calling because they recently made changes to their account (related to: ${services.join(', ')}). Your goal is to discover WHY they made these changes.`
+    const calls = await this.db.getCallsByStatus('ringing')
+    const activeCalls = await this.db.getCallsByStatus('answered')
+    const allCalls = [...calls, ...activeCalls]
+    
+    const call = allCalls.find(c => c.twilioSid === CallSid)
+    if (!call) {
+      console.log('Call not found for Twilio SID:', CallSid)
+      return
     }
     
-    // Count customer messages (excluding system messages)
-    const customerMessageCount = context.conversationHistory.filter(msg => msg.role === 'user').length
+    let newStatus: CallStatus
+    const updates: Partial<Call> = {}
     
-    return `You are ${botName}, an empathetic and professional customer service AI from ${bankName}. You are conducting a voice call with ${customerName}. ${reasonContext}
-
-CONVERSATION STATUS: Customer has responded ${customerMessageCount} time(s). You should ask a MAXIMUM of 2 follow-up questions, then wrap up the call.
-
-Your primary goals:
-1. Listen empathetically and make the customer feel heard
-2. Understand their specific concerns and issues - discover the real reasons behind their actions
-3. Gather detailed feedback about their experience
-4. DO NOT try to solve problems or offer solutions - just listen and understand
-5. Keep responses conversational and natural for voice interaction
-6. Be concise - responses should be 1-3 sentences maximum
-7. Ask follow-up questions to get deeper insights (MAX 2 follow-ups)
-8. After 2 follow-up questions, thank them warmly and end the call
-
-Services context: ${services.join(', ')}
-
-CALL FLOW:
-- First customer response: Acknowledge and ask 1 clarifying question
-- Second customer response: Ask 1 more follow-up question if needed
-- Third customer response: Thank them and wrap up the call - DO NOT ask more questions
-
-CRITICAL GUARDRAILS:
-- ONLY discuss topics related to: banking, customer service experience, account changes, financial services, and the reason for this call
-- If asked about ANYTHING unrelated (recipes, general knowledge, personal advice, technical help, etc.), politely redirect: "I appreciate the question, but I'm here specifically to understand your experience with ${bankName}. Is there anything about your banking experience you'd like to share?"
-- DO NOT provide information, advice, or answers on topics outside of banking and customer feedback
-- If the customer is being hostile, abusive, or inappropriate, remain professional and end the call gracefully: "I understand you're frustrated. I want to make sure we can have a productive conversation. If now isn't a good time, we can always reconnect later."
-- Never provide: personal advice, medical information, legal advice, technical support unrelated to banking, recipes, general knowledge, or entertainment
-
-Guidelines:
-- Always be empathetic and understanding
-- Use natural, conversational language suitable for voice
-- Ask ONE question at a time maximum
-- Acknowledge their feelings before asking follow-ups
-- If they seem upset, validate their emotions first
-- Keep responses under 50 words when possible
-- Stay strictly on topic - this is a banking feedback call
-- Don't be overly formal or robotic
-- Keep calls brief and respectful of their time
-
-Example responses:
-- "I'm really sorry to hear about that experience. That must have been frustrating. Can you tell me what specifically went wrong?"
-- "Thank you for sharing that with me. What would have made that experience better for you?"
-- "I understand completely. Thank you so much for taking the time to share this feedback with me today, ${customerName}. Your insights are incredibly valuable to us."
-
-Example off-topic redirects:
-Customer: "Can you give me a recipe for cheesecake?"
-You: "I appreciate the question, but I'm here specifically to understand your experience with ${bankName}. Is there anything about your banking services you'd like to discuss?"
-
-Remember: Your ONLY job is to LISTEN, UNDERSTAND, and DISCOVER reasons related to their banking experience. Keep it brief - maximum 2 follow-up questions, then end the call gracefully.`
+    switch (CallStatus) {
+      case 'ringing':
+        newStatus = 'ringing'
+        break
+      case 'in-progress':
+        newStatus = 'answered'
+        break
+      case 'completed':
+        newStatus = 'completed'
+        updates.endedAt = new Date()
+        if (Duration) {
+          updates.duration = parseInt(Duration)
+        }
+        break
+      case 'busy':
+      case 'no-answer':
+      case 'failed':
+        newStatus = 'failed'
+        updates.endedAt = new Date()
+        updates.errorMessage = CallStatus
+        break
+      case 'canceled':
+        newStatus = 'cancelled'
+        updates.endedAt = new Date()
+        break
+      default:
+        return
+    }
+    
+    await this.db.updateCallStatus(call.id, newStatus, updates)
+    
+    if (newStatus === 'completed') {
+      await this.handleCallCompletion(call.id)
+    } else if (newStatus === 'failed') {
+      await this.handleCallFailure(call.id)
+    }
   }
   
-  /**
-   * Analyze conversation for sentiment, issues, and completion
-   */
-  private async analyzeConversation(context: ConversationContext): Promise<{
-    sentiment: 'positive' | 'negative' | 'neutral'
-    keyIssues: string[]
-    shouldEndCall: boolean
-    summary?: string
-    resolution?: string
-  }> {
+  private async handleCallCompletion(callId: string): Promise<void> {
     try {
-      const conversationText = context.conversationHistory
-        .filter(msg => msg.role !== 'system')
-        .map(msg => `${msg.role}: ${msg.content}`)
-        .join('\n')
+      // Load context from database
+      const context = await this.db.getConversationByCallId(callId)
+      if (!context) {
+        console.log(`[handleCallCompletion] No conversation found for callId: ${callId}`)
+        return
+      }
       
-      // Count customer responses
-      const customerResponseCount = context.conversationHistory.filter(msg => msg.role === 'user').length
+      const summary = await this.openaiClient.generateCallSummary(context)
       
-      const analysisPrompt = `Analyze this customer service conversation and provide:
-
-1. Overall sentiment (positive/negative/neutral)
-2. Key issues mentioned by the customer (list of specific problems)
-3. Whether the call should end (true if customer has responded 3+ times OR seems satisfied with being heard)
-4. If call should end, provide a brief summary
-5. Any resolution or next steps mentioned
-
-Customer has responded ${customerResponseCount} times. If this is 3 or more, shouldEndCall MUST be true.
-
-Conversation:
-${conversationText}
-
-Respond in JSON format:
-{
-  "sentiment": "positive|negative|neutral",
-  "keyIssues": ["issue1", "issue2"],
-  "shouldEndCall": true|false,
-  "summary": "brief summary if ending",
-  "resolution": "any resolution mentioned"
-}`
-      
-      const completion = await this.client.chat.completions.create({
-        model: 'gpt-4o',
-        messages: [{ role: 'user', content: analysisPrompt }],
-        temperature: 0.1,
-        max_tokens: 500
+      await this.db.updateCallStatus(callId, 'completed', {
+        transcript: this.formatTranscript(context.conversationHistory),
+        summary: summary.summary,
+        sentiment: summary.sentiment,
+        keyIssues: summary.keyIssues
       })
       
-      const response = completion.choices[0]?.message?.content
-      if (!response) throw new Error('No analysis response')
+      const call = await this.db.getCallById(callId)
       
-      // Remove markdown code blocks if present
-      const cleanedResponse = response
-        .replace(/```json\s*/g, '')
-        .replace(/```\s*/g, '')
-        .trim()
-      
-      const analysis = JSON.parse(cleanedResponse)
-      
-      // Force end call after 3 customer responses
-      const shouldEndCall = analysis.shouldEndCall || customerResponseCount >= 3
-      
-      return {
-        sentiment: analysis.sentiment || 'neutral',
-        keyIssues: analysis.keyIssues || [],
-        shouldEndCall,
-        summary: analysis.summary,
-        resolution: analysis.resolution
+      if (call?.twilioSid) {
+        const recordingUrl = await this.twilioClient.getCallRecording(call.twilioSid)
+        console.log('Recording URL:', recordingUrl)
+        
+        const twilioTranscription = await this.twilioClient.getCallTranscription(call.twilioSid)
+        if (twilioTranscription) {
+          console.log('Twilio transcription:', twilioTranscription)
+        }
       }
       
+      // Clean up conversation from database
+      await this.db.deleteConversation(callId)
+      console.log(`[handleCallCompletion] Deleted conversation for callId: ${callId}`)
+      
     } catch (error) {
-      console.error('Conversation analysis failed:', error)
-      // Force end if too many messages
-      const customerResponseCount = context.conversationHistory.filter(msg => msg.role === 'user').length
-      return {
-        sentiment: 'neutral',
-        keyIssues: [],
-        shouldEndCall: customerResponseCount >= 3,
-        summary: 'Conversation completed'
+      console.error('Error handling call completion:', error)
+    }
+  }
+  
+  private async handleCallFailure(callId: string): Promise<void> {
+    const call = await this.db.getCallById(callId)
+    
+    if (!call) return
+    
+    const campaign = await this.db.getCampaignById(call.campaignId)
+    if (!campaign) return
+    
+    if (call.retryCount < call.maxRetries) {
+      const shouldRetry = this.shouldRetryCall(call.errorMessage || '', campaign.retrySettings)
+      
+      if (shouldRetry) {
+        const retryDelay = campaign.retrySettings.retryDelay * 60 * 1000
+        
+        setTimeout(async () => {
+          await this.db.updateCallStatus(callId, 'pending')
+        }, retryDelay)
+        
+        console.log(`Scheduling retry for call ${callId} in ${campaign.retrySettings.retryDelay} minutes`)
+      }
+    }
+    
+    // Clean up conversation
+    await this.db.deleteConversation(callId)
+  }
+  
+  private shouldRetryCall(errorMessage: string, retrySettings: any): boolean {
+    const error = errorMessage.toLowerCase()
+    
+    if (error.includes('busy') && retrySettings.retryOnBusy) return true
+    if (error.includes('no-answer') && retrySettings.retryOnNoAnswer) return true
+    if (error.includes('failed') && retrySettings.retryOnFailed) return true
+    
+    return false
+  }
+  
+  /**
+   * Handle incoming audio stream from customer - WITH ON-DEMAND CONTEXT CREATION
+   */
+  async handleCustomerInput(callId: string, audioInput: string): Promise<string> {
+    console.log(`[handleCustomerInput] START - callId: ${callId}`)
+    console.log(`[handleCustomerInput] audioInput: ${audioInput.substring(0, 200)}`)
+    
+    try {
+      // Try to load context from database
+      let context = await this.db.getConversationByCallId(callId)
+      
+      // If NOT found, create it on-demand from call data
+      if (!context) {
+        console.log(`[handleCustomerInput] No conversation found in DB, creating on-demand for callId: ${callId}`)
+        
+        // Fetch call and customer data
+        const call = await this.db.getCallById(callId)
+        if (!call) {
+          console.error(`[handleCustomerInput] Call not found in DB for callId: ${callId}`)
+          return "I'm sorry, there seems to be a technical issue. Could you please repeat that?"
+        }
+        
+        const customer = await this.db.getCustomerById(call.customerId)
+        if (!customer) {
+          console.error(`[handleCustomerInput] Customer not found for callId: ${callId}`)
+          return "I'm sorry, there seems to be a technical issue. Could you please repeat that?"
+        }
+        
+        // Create new context on-demand
+        context = {
+          callId: call.id,
+          campaignId: call.campaignId,
+          customerName: customer.name,
+          customerReason: customer.reason || '',
+          services: call.services,
+          bankName: process.env.BANK_NAME || 'Your Bank',
+          botName: process.env.BOT_NAME || 'Customer Care Assistant',
+          conversationHistory: []
+        }
+        
+        // Save it to database for future requests
+        await this.db.insertConversation(context)
+        console.log(`[handleCustomerInput] Created and saved new conversation context for ${customer.name}`)
+      }
+      
+      console.log(`[handleCustomerInput] Context loaded for ${context.customerName}`)
+      console.log('[handleCustomerInput] Calling OpenAI generateResponse...')
+      
+      const startTime = Date.now()
+      const aiResponse = await this.openaiClient.generateResponse(audioInput, context)
+      const duration = Date.now() - startTime
+      
+      console.log(`[handleCustomerInput] OpenAI responded in ${duration}ms`)
+      console.log(`[handleCustomerInput] AI message: ${aiResponse.message.substring(0, 200)}`)
+      console.log(`[handleCustomerInput] shouldEndCall: ${aiResponse.shouldEndCall}`)
+      
+      // Save updated conversation history to database
+      await this.db.updateConversationHistory(callId, context.conversationHistory)
+      console.log(`[handleCustomerInput] Saved conversation history to DB`)
+      
+      if (aiResponse.shouldEndCall) {
+        console.log('[handleCustomerInput] Ending call...')
+        const closingMessage = this.openaiClient.generateClosingMessage(context, aiResponse.summary)
+        
+        setTimeout(async () => {
+          await this.handleCallCompletion(callId)
+        }, 5000)
+        
+        return closingMessage
+      }
+      
+      const optimizedResponse = this.openaiClient.optimizeForSpeech(aiResponse.message)
+      console.log(`[handleCustomerInput] Returning response: ${optimizedResponse.substring(0, 200)}`)
+      
+      return optimizedResponse
+      
+    } catch (error) {
+      console.error('[handleCustomerInput] ERROR:', error)
+      console.error('[handleCustomerInput] Error stack:', error instanceof Error ? error.stack : 'No stack')
+      return "I apologize for the technical difficulty. Could you please continue with what you were saying?"
+    }
+  }
+  
+  async getCampaignStatus(campaignId: string): Promise<any> {
+    const campaign = await this.db.getCampaignById(campaignId)
+    if (!campaign) return null
+    
+    const calls = await this.db.getCallsByCampaign(campaignId)
+    
+    const statusCounts = calls.reduce((acc, call) => {
+      acc[call.status] = (acc[call.status] || 0) + 1
+      return acc
+    }, {} as Record<string, number>)
+    
+    return {
+      campaign,
+      calls: calls.length,
+      statusCounts,
+      completed: statusCounts.completed || 0,
+      failed: statusCounts.failed || 0,
+      inProgress: (statusCounts.calling || 0) + (statusCounts.ringing || 0) + (statusCounts.answered || 0),
+      pending: statusCounts.pending || 0
+    }
+  }
+  
+  async cancelCampaign(campaignId: string): Promise<void> {
+    await this.db.updateCampaignStatus(campaignId, 'cancelled')
+    
+    const activeCalls = await this.db.getCallsByCampaign(campaignId)
+    for (const call of activeCalls) {
+      if (['calling', 'ringing', 'answered'].includes(call.status)) {
+        if (call.twilioSid) {
+          await this.twilioClient.cancelCall(call.twilioSid)
+        }
+        await this.db.updateCallStatus(call.id, 'cancelled')
       }
     }
   }
   
-  /**
-   * Generate call summary after completion
-   */
-  async generateCallSummary(context: ConversationContext): Promise<{
-    summary: string
-    sentiment: 'positive' | 'negative' | 'neutral'
-    keyIssues: string[]
-    recommendations: string[]
-  }> {
-    try {
-      const conversationText = context.conversationHistory
-        .filter(msg => msg.role !== 'system')
-        .map(msg => `${msg.role}: ${msg.content}`)
-        .join('\n')
-      
-      const summaryPrompt = `Create a comprehensive summary of this customer feedback call:
-
-Customer: ${context.customerName}
-${context.customerReason ? `Original Reason for Leaving: ${context.customerReason}` : 'Purpose: Discover why customer left'}
-Services Affected: ${context.services.join(', ')}
-
-Conversation:
-${conversationText}
-
-Provide a detailed analysis in JSON format:
-{
-  "summary": "2-3 paragraph summary of the key points discussed",
-  "sentiment": "overall customer sentiment (positive/negative/neutral)",
-  "keyIssues": ["specific issues mentioned by customer"],
-  "recommendations": ["actionable recommendations for the bank based on feedback"]
+  private formatTranscript(history: ConversationContext['conversationHistory']): string {
+    return history
+      .filter(msg => msg.role !== 'system')
+      .map(msg => `${msg.role === 'user' ? 'Customer' : 'AI Assistant'}: ${msg.content}`)
+      .join('\n\n')
+  }
 }
-
-Focus on:
-- What the customer's main concerns were
-- How they felt about their experience
-- Specific problems they encountered
-- What could have been done better
-- Any positive feedback they shared`
-      
-      const completion = await this.client.chat.completions.create({
-        model: 'gpt-4o',
-        messages: [{ role: 'user', content: summaryPrompt }],
-        temperature: 0.3,
-        max_tokens: 800
-      })
-      
-      const response = completion.choices[0]?.message?.content
-      if (!response) throw new Error('No summary response')
-      
-      // Remove markdown code blocks if present
-      const cleanedResponse = response
-        .replace(/```json\s*/g, '')
-        .replace(/```\s*/g, '')
-        .trim()
-      
-      const summary = JSON.parse(cleanedResponse)
-      
-      return {
-        summary: summary.summary || 'Call completed successfully',
-        sentiment: summary.sentiment || 'neutral',
-        keyIssues: summary.keyIssues || [],
-        recommendations: summary.recommendations || []
-      }
-      
-    } catch (error) {
-      console.error('Summary generation failed:', error)
-      return {
-        summary: `Customer ${context.customerName} provided feedback about their experience.${context.customerReason ? ` Reason mentioned: ${context.customerReason}` : ''}`,
-        sentiment: 'neutral',
-        keyIssues: context.customerReason ? [context.customerReason] : [],
-        recommendations: ['Follow up with customer service improvements']
-      }
-    }
-  }
-  
-  /**
-   * Generate closing message for the call
-   */
-  generateClosingMessage(context: ConversationContext, summary?: string): string {
-    const { customerName, bankName } = context
-    
-    const closingMessages = [
-      `Thank you so much for taking the time to speak with me today, ${customerName}. Your feedback is incredibly valuable to us at ${bankName}, and I want you to know that we've heard everything you've shared. We truly appreciate your honesty.`,
-      
-      `${customerName}, I really appreciate you sharing your experience with me. Your feedback helps us understand where we can do better. Thank you for giving us this opportunity to listen.`,
-      
-      `Thank you, ${customerName}, for being so open about your experience. We value your feedback tremendously, and I want you to know that everything you've shared will be passed along to help us improve our services.`
-    ]
-    
-    const messageIndex = Math.floor(Math.random() * closingMessages.length)
-    return closingMessages[messageIndex]
-  }
-  
-  /**
-   * Convert text to speech-optimized format
-   */
-  optimizeForSpeech(text: string): string {
-    // Polly Neural voice handles natural speech well, return text as-is
-    return text
-  }
-}
-
-export default OpenAIClient

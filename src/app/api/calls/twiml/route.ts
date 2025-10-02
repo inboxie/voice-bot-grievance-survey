@@ -193,7 +193,12 @@ async function handleCustomerResponse(
     const shouldEndCall = checkIfShouldEndCall(speechResult, aiResponse)
     
     if (shouldEndCall) {
-      return generateClosingTwiML(aiResponse, customerName)
+      // End call immediately with ONLY the AI response and hangup - NO Gather
+      return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="Polly.Joanna-Neural" language="en-US">${aiResponse.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</Say>
+    <Hangup />
+</Response>`
     }
     
     // Continue conversation
