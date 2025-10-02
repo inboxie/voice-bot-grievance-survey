@@ -62,7 +62,7 @@ export class OpenAIClient {
       ]
       
       const completion = await this.client.chat.completions.create({
-        model: 'gpt-4-turbo-preview',
+        model: 'gpt-4o',
         messages,
         temperature: 0.7,
         max_tokens: 300,
@@ -184,7 +184,7 @@ Respond in JSON format:
 }`
       
       const completion = await this.client.chat.completions.create({
-        model: 'gpt-4-turbo-preview',
+        model: 'gpt-4o',
         messages: [{ role: 'user', content: analysisPrompt }],
         temperature: 0.1,
         max_tokens: 500
@@ -193,7 +193,13 @@ Respond in JSON format:
       const response = completion.choices[0]?.message?.content
       if (!response) throw new Error('No analysis response')
       
-      const analysis = JSON.parse(response)
+      // Remove markdown code blocks if present
+      const cleanedResponse = response
+        .replace(/```json\s*/g, '')
+        .replace(/```\s*/g, '')
+        .trim()
+      
+      const analysis = JSON.parse(cleanedResponse)
       
       return {
         sentiment: analysis.sentiment || 'neutral',
@@ -208,7 +214,7 @@ Respond in JSON format:
       return {
         sentiment: 'neutral',
         keyIssues: [],
-        shouldEndCall: context.conversationHistory.length > 20, // End after 20 exchanges
+        shouldEndCall: context.conversationHistory.length > 20,
         summary: 'Conversation completed'
       }
     }
@@ -254,7 +260,7 @@ Focus on:
 - Any positive feedback they shared`
       
       const completion = await this.client.chat.completions.create({
-        model: 'gpt-4-turbo-preview',
+        model: 'gpt-4o',
         messages: [{ role: 'user', content: summaryPrompt }],
         temperature: 0.3,
         max_tokens: 800
@@ -263,7 +269,13 @@ Focus on:
       const response = completion.choices[0]?.message?.content
       if (!response) throw new Error('No summary response')
       
-      const summary = JSON.parse(response)
+      // Remove markdown code blocks if present
+      const cleanedResponse = response
+        .replace(/```json\s*/g, '')
+        .replace(/```\s*/g, '')
+        .trim()
+      
+      const summary = JSON.parse(cleanedResponse)
       
       return {
         summary: summary.summary || 'Call completed successfully',
@@ -297,7 +309,6 @@ Focus on:
       `Thank you, ${customerName}, for being so open about your experience. We value your feedback tremendously, and I want you to know that everything you've shared will be passed along to help us improve our services.`
     ]
     
-    // Rotate through different closing messages
     const messageIndex = Math.floor(Math.random() * closingMessages.length)
     return closingMessages[messageIndex]
   }
@@ -306,17 +317,8 @@ Focus on:
    * Convert text to speech-optimized format
    */
   optimizeForSpeech(text: string): string {
+    // Polly Neural voice handles natural speech well, return text as-is
     return text
-      // Add pauses for better speech flow
-      .replace(/\. /g, '. <break time="0.5s"/> ')
-      .replace(/\? /g, '? <break time="0.3s"/> ')
-      .replace(/! /g, '! <break time="0.3s"/> ')
-      // Ensure proper pronunciation of common banking terms
-      .replace(/\bAPI\b/g, 'A P I')
-      .replace(/\bATM\b/g, 'A T M')
-      .replace(/\bID\b/g, 'I D')
-      // Slow down phone numbers and account numbers
-      .replace(/(\d{3,})/g, '<prosody rate="slow">$1</prosody>')
   }
 }
 
