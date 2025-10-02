@@ -303,22 +303,51 @@ export class CallOrchestrator {
   }
   
   /**
-   * Handle incoming audio stream from customer - NOW LOADS FROM DATABASE
+   * Handle incoming audio stream from customer - WITH ON-DEMAND CONTEXT CREATION
    */
   async handleCustomerInput(callId: string, audioInput: string): Promise<string> {
     console.log(`[handleCustomerInput] START - callId: ${callId}`)
     console.log(`[handleCustomerInput] audioInput: ${audioInput.substring(0, 200)}`)
     
     try {
-      // Load context from database
+      // Try to load context from database
       let context = await this.db.getConversationByCallId(callId)
       
+      // If NOT found, create it on-demand from call data
       if (!context) {
-        console.error(`[handleCustomerInput] No conversation found in DB for callId: ${callId}`)
-        return "I'm sorry, there seems to be a technical issue. Could you please repeat that?"
+        console.log(`[handleCustomerInput] No conversation found in DB, creating on-demand for callId: ${callId}`)
+        
+        // Fetch call and customer data
+        const call = await this.db.getCallById(callId)
+        if (!call) {
+          console.error(`[handleCustomerInput] Call not found in DB for callId: ${callId}`)
+          return "I'm sorry, there seems to be a technical issue. Could you please repeat that?"
+        }
+        
+        const customer = await this.db.getCustomerById(call.customerId)
+        if (!customer) {
+          console.error(`[handleCustomerInput] Customer not found for callId: ${callId}`)
+          return "I'm sorry, there seems to be a technical issue. Could you please repeat that?"
+        }
+        
+        // Create new context on-demand
+        context = {
+          callId: call.id,
+          campaignId: call.campaignId,
+          customerName: customer.name,
+          customerReason: customer.reason || '',
+          services: call.services,
+          bankName: process.env.BANK_NAME || 'Your Bank',
+          botName: process.env.BOT_NAME || 'Customer Care Assistant',
+          conversationHistory: []
+        }
+        
+        // Save it to database for future requests
+        await this.db.insertConversation(context)
+        console.log(`[handleCustomerInput] Created and saved new conversation context for ${customer.name}`)
       }
       
-      console.log(`[handleCustomerInput] Context loaded from DB for ${context.customerName}`)
+      console.log(`[handleCustomerInput] Context loaded for ${context.customerName}`)
       console.log('[handleCustomerInput] Calling OpenAI generateResponse...')
       
       const startTime = Date.now()
