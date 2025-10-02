@@ -129,28 +129,36 @@ function generateOpeningTwiML(customerName: string, customerReason: string, call
   const bankName = process.env.BANK_NAME || 'Your Bank'
   const botName = process.env.BOT_NAME || 'Customer Care Assistant'
   
-  // Generate concise opening based on reason
+  // Generate concise opening that goes straight into the first question
   let openingMessage: string
   
   if (customerReason && customerReason.trim()) {
     const lowerReason = customerReason.toLowerCase()
-    let serviceContext = 'your recent experience with us'
+    let serviceContext = 'your credit card experience'
+    let question = 'Could you share what prompted those changes?'
     
     // Make it specific to the service
     if (lowerReason.includes('credit card') || lowerReason.includes('card')) {
       serviceContext = 'your credit card experience'
+      question = 'Could you share what prompted those changes?'
     } else if (lowerReason.includes('account') || lowerReason.includes('checking') || lowerReason.includes('savings')) {
       serviceContext = 'your account with us'
+      question = 'Could you tell me what prompted those changes?'
     } else if (lowerReason.includes('loan') || lowerReason.includes('mortgage')) {
       serviceContext = 'your loan experience'
+      question = 'Could you share what led to those changes?'
     } else if (lowerReason.includes('investment') || lowerReason.includes('wealth')) {
       serviceContext = 'your investment experience'
+      question = 'Could you tell me what prompted those changes?'
+    } else {
+      serviceContext = 'your recent experience with us'
+      question = 'Could you share what prompted those changes?'
     }
     
-    openingMessage = `Hello ${customerName}, this is ${botName} from ${bankName}. I'm calling about ${serviceContext}. We'd love to understand your feedback. Do you have a moment to share your thoughts?`
+    openingMessage = `Hello ${customerName}, this is ${botName} from ${bankName}. I'm calling about ${serviceContext}. ${question}`
   } else {
-    // No reason - very brief
-    openingMessage = `Hello ${customerName}, this is ${botName} from ${bankName}. We noticed you recently made changes to your account, and we'd love to hear your feedback. Do you have a moment?`
+    // No reason - ask open question
+    openingMessage = `Hello ${customerName}, this is ${botName} from ${bankName}. I'm calling because you recently made changes to your account. Could you share what prompted those changes?`
   }
   
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -162,7 +170,6 @@ function generateOpeningTwiML(customerName: string, customerReason: string, call
         timeout="30"
         speechTimeout="auto"
         language="en-US"
-        hints="yes,no,sure,okay,not now,busy,call later"
         action="https://voice-bot-grievance-survey.vercel.app/api/calls/twiml?callId=${callId}&amp;campaignId=${campaignId}"
         method="POST">
     </Gather>
