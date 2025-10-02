@@ -129,34 +129,28 @@ function generateOpeningTwiML(customerName: string, customerReason: string, call
   const bankName = process.env.BANK_NAME || 'Your Bank'
   const botName = process.env.BOT_NAME || 'Customer Care Assistant'
   
-  // Generate opening based on whether we have a reason or not
+  // Generate concise opening based on reason
   let openingMessage: string
   
   if (customerReason && customerReason.trim()) {
-    // We have a reason - customize based on it
-    let contextualMessage = 'regarding your recent experience with our bank'
     const lowerReason = customerReason.toLowerCase()
+    let serviceContext = 'your recent experience with us'
     
+    // Make it specific to the service
     if (lowerReason.includes('credit card') || lowerReason.includes('card')) {
-      contextualMessage = 'regarding your recent credit card experience'
-    } else if (lowerReason.includes('account') || lowerReason.includes('banking')) {
-      contextualMessage = 'regarding your account experience with us'
+      serviceContext = 'your credit card experience'
+    } else if (lowerReason.includes('account') || lowerReason.includes('checking') || lowerReason.includes('savings')) {
+      serviceContext = 'your account with us'
     } else if (lowerReason.includes('loan') || lowerReason.includes('mortgage')) {
-      contextualMessage = 'regarding your lending experience'
-    } else if (lowerReason.includes('service') || lowerReason.includes('staff')) {
-      contextualMessage = 'regarding your service experience'
+      serviceContext = 'your loan experience'
+    } else if (lowerReason.includes('investment') || lowerReason.includes('wealth')) {
+      serviceContext = 'your investment experience'
     }
     
-    openingMessage = `Hello ${customerName}, this is ${botName} calling from ${bankName}. 
-      I hope I'm reaching you at a good time. I'm calling ${contextualMessage}. 
-      We truly value your feedback and would love to understand your experience better 
-      so we can improve our services. Do you have a few minutes to share your thoughts with me?`
+    openingMessage = `Hello ${customerName}, this is ${botName} from ${bankName}. I'm calling about ${serviceContext}. We'd love to understand your feedback. Do you have a moment to share your thoughts?`
   } else {
-    // No reason provided - general outreach
-    openingMessage = `Hello ${customerName}, this is ${botName} calling from ${bankName}. 
-      I hope I'm reaching you at a good time. We noticed you recently made some changes to your account with us, 
-      and we truly value your feedback. We'd love to understand your experience and hear your thoughts 
-      so we can continue to improve our services. Do you have a few minutes to chat with me?`
+    // No reason - very brief
+    openingMessage = `Hello ${customerName}, this is ${botName} from ${bankName}. We noticed you recently made changes to your account, and we'd love to hear your feedback. Do you have a moment?`
   }
   
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -171,12 +165,10 @@ function generateOpeningTwiML(customerName: string, customerReason: string, call
         hints="yes,no,sure,okay,not now,busy,call later"
         action="https://voice-bot-grievance-survey.vercel.app/api/calls/twiml?callId=${callId}&amp;campaignId=${campaignId}"
         method="POST">
-        <Say voice="Polly.Joanna-Neural" language="en-US">Please go ahead and share your thoughts.</Say>
     </Gather>
     
     <Say voice="Polly.Joanna-Neural" language="en-US">
-        I didn't hear a response. If now isn't a good time, I completely understand. 
-        Please feel free to call us back when it's more convenient. Thank you.
+        I didn't hear a response. If now isn't a good time, feel free to call us back. Thank you.
     </Say>
     <Hangup />
 </Response>`
@@ -216,12 +208,10 @@ async function handleCustomerResponse(
         language="en-US"
         action="https://voice-bot-grievance-survey.vercel.app/api/calls/twiml?callId=${callId}&amp;campaignId=${campaignId}"
         method="POST">
-        <Say voice="Polly.Joanna-Neural" language="en-US">Please continue.</Say>
     </Gather>
     
     <Say voice="Polly.Joanna-Neural" language="en-US">
-        Thank you so much for sharing your feedback with me today, ${customerName}. 
-        Your input is incredibly valuable to us. Have a wonderful day.
+        Thank you so much for sharing your feedback, ${customerName}. Have a wonderful day.
     </Say>
     <Hangup />
 </Response>`
@@ -232,8 +222,7 @@ async function handleCustomerResponse(
     return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Say voice="Polly.Joanna-Neural" language="en-US">
-        I understand completely. Thank you for taking the time to speak with me, ${customerName}. 
-        Your feedback is very important to us.
+        Thank you for your time, ${customerName}. Your feedback is very important to us.
     </Say>
     <Hangup />
 </Response>`
@@ -267,8 +256,7 @@ function handleDTMFResponse(digits: string, customerName: string): string {
       return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Say voice="Polly.Joanna-Neural" language="en-US">
-        I completely understand, ${customerName}. Thank you for your time. 
-        Please feel free to call us back when it's more convenient.
+        I completely understand, ${customerName}. Thank you for your time.
     </Say>
     <Hangup />
 </Response>`
@@ -277,8 +265,7 @@ function handleDTMFResponse(digits: string, customerName: string): string {
       return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Say voice="Polly.Joanna-Neural" language="en-US">
-        I'm sorry, I didn't understand that selection. 
-        If you'd like to continue, just start speaking. Otherwise, I'll end the call.
+        I'm sorry, I didn't understand that. If you'd like to continue, just start speaking.
     </Say>
     <Gather 
         input="speech" 
@@ -325,7 +312,7 @@ function generateClosingTwiML(message: string, customerName: string): string {
 <Response>
     <Say voice="Polly.Joanna-Neural" language="en-US">${message.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</Say>
     <Say voice="Polly.Joanna-Neural" language="en-US">
-        Have a wonderful day, ${customerName}, and thank you again for your valuable feedback.
+        Have a wonderful day, ${customerName}.
     </Say>
     <Hangup />
 </Response>`
@@ -338,8 +325,7 @@ function generateFallbackTwiML(): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Say voice="Polly.Joanna-Neural" language="en-US">
-        Thank you for your time today. If you'd like to share feedback about your banking experience, 
-        please feel free to call our customer service line directly. Have a great day.
+        Thank you for your time. Have a great day.
     </Say>
     <Hangup />
 </Response>`
