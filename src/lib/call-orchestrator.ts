@@ -303,7 +303,7 @@ export class CallOrchestrator {
   }
   
   /**
-   * Handle incoming audio stream from customer - WITH ON-DEMAND CONTEXT CREATION
+   * Handle incoming audio stream from customer - WITH FORCED 3-RESPONSE LIMIT
    */
   async handleCustomerInput(callId: string, audioInput: string): Promise<string> {
     console.log(`[handleCustomerInput] START - callId: ${callId}`)
@@ -348,6 +348,32 @@ export class CallOrchestrator {
       }
       
       console.log(`[handleCustomerInput] Context loaded for ${context.customerName}`)
+      
+      // Count customer responses BEFORE calling OpenAI
+      const customerResponseCount = context.conversationHistory.filter(msg => msg.role === 'user').length
+      console.log(`[handleCustomerInput] Customer has responded ${customerResponseCount} times`)
+      
+      // Force end call after 3 customer responses
+      if (customerResponseCount >= 3) {
+        console.log('[handleCustomerInput] Forcing call end - 3 responses reached')
+        const closingMessage = this.openaiClient.generateClosingMessage(context, 'Call completed after 3 exchanges')
+        
+        // Save the closing message to history
+        context.conversationHistory.push({
+          role: 'assistant',
+          content: closingMessage,
+          timestamp: new Date()
+        })
+        
+        await this.db.updateConversationHistory(callId, context.conversationHistory)
+        
+        setTimeout(async () => {
+          await this.handleCallCompletion(callId)
+        }, 5000)
+        
+        return closingMessage
+      }
+      
       console.log('[handleCustomerInput] Calling OpenAI generateResponse...')
       
       const startTime = Date.now()
@@ -363,7 +389,7 @@ export class CallOrchestrator {
       console.log(`[handleCustomerInput] Saved conversation history to DB`)
       
       if (aiResponse.shouldEndCall) {
-        console.log('[handleCustomerInput] Ending call...')
+        console.log('[handleCustomerInput] Ending call per OpenAI decision...')
         const closingMessage = this.openaiClient.generateClosingMessage(context, aiResponse.summary)
         
         setTimeout(async () => {
