@@ -131,30 +131,30 @@ function generateOpeningTwiML(customerName: string, services: string[], callId: 
   
   // Check the first service in the array (primary service)
   if (services && services.length > 0) {
-    const primaryService = services[0].toLowerCase()
+    const primaryService = services[0].toLowerCase().replace(/-/g, ' ').replace(/_/g, ' ')
     
-    if (primaryService.includes('credit card') || primaryService === 'credit card') {
+    if (primaryService.includes('credit') && primaryService.includes('card')) {
       serviceContext = 'your credit card experience'
       question = 'Could you share what has been on your mind regarding your credit card?'
-    } else if (primaryService.includes('personal banking') || primaryService === 'personal banking') {
+    } else if (primaryService.includes('personal') && primaryService.includes('bank')) {
       serviceContext = 'your personal banking experience'
       question = 'Could you tell me about your recent banking experience?'
-    } else if (primaryService.includes('loan') || primaryService === 'loans') {
+    } else if (primaryService.includes('loan')) {
       serviceContext = 'your loan experience'
       question = 'Could you share your thoughts about your loan experience?'
-    } else if (primaryService.includes('mortgage') || primaryService === 'mortgage') {
+    } else if (primaryService.includes('mortgage')) {
       serviceContext = 'your mortgage experience'
       question = 'Could you tell me about your mortgage experience with us?'
-    } else if (primaryService.includes('business') || primaryService === 'business banking') {
+    } else if (primaryService.includes('business')) {
       serviceContext = 'your business banking experience'
       question = 'Could you share your thoughts about our business banking services?'
-    } else if (primaryService.includes('investment') || primaryService === 'investment services') {
+    } else if (primaryService.includes('investment')) {
       serviceContext = 'your investment experience'
       question = 'Could you tell me about your experience with our investment services?'
-    } else if (primaryService.includes('mobile') || primaryService.includes('online') || primaryService === 'mobile & online banking') {
+    } else if (primaryService.includes('mobile') || primaryService.includes('online')) {
       serviceContext = 'your digital banking experience'
       question = 'Could you share your thoughts about our mobile or online banking?'
-    } else if (primaryService.includes('customer service') || primaryService === 'customer service') {
+    } else if (primaryService.includes('customer') && primaryService.includes('service')) {
       serviceContext = 'your customer service experience'
       question = 'Could you tell me about your recent experience with our customer service?'
     }
