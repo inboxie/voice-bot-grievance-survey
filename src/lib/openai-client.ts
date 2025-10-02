@@ -79,16 +79,19 @@ export class OpenAIClient {
         timestamp: new Date()
       })
       
-      // Analyze the conversation
-      const analysis = await this.analyzeConversation(context)
+      // Count customer responses
+      const customerResponseCount = context.conversationHistory.filter(msg => msg.role === 'user').length
+      
+      // SKIP ANALYSIS DURING CALL - just check if we should end based on count
+      const shouldEndCall = customerResponseCount >= 3
       
       return {
         message: aiMessage,
-        sentiment: analysis.sentiment,
-        keyIssues: analysis.keyIssues,
-        shouldEndCall: analysis.shouldEndCall,
-        summary: analysis.shouldEndCall ? analysis.summary : undefined,
-        resolution: analysis.resolution
+        sentiment: 'neutral',  // Will be analyzed at call end
+        keyIssues: [],  // Will be analyzed at call end
+        shouldEndCall,
+        summary: undefined,
+        resolution: undefined
       }
       
     } catch (error) {
