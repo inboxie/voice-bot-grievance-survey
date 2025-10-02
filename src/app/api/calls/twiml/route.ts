@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
     await db.connect()
     
     let customerName = 'Valued Customer'
-    let customerReason = ''
+    let services: string[] = []
     
     if (callId && campaignId) {
       try {
@@ -50,10 +50,7 @@ export async function POST(request: NextRequest) {
         
         if (call) {
           customerName = call.customerName
-          const customer = await db.getCustomerById(call.customerId)
-          if (customer) {
-            customerReason = customer.reason || ''
-          }
+          services = call.services || []
         } else {
           console.log(`Call not found for callId: ${callId}`)
         }
@@ -65,8 +62,8 @@ export async function POST(request: NextRequest) {
     // Handle different stages of the conversation
     if (!speechResult && !digits) {
       // Initial call - generate opening message
-      console.log('Generating opening TwiML for:', customerName)
-      const openingTwiML = generateOpeningTwiML(customerName, customerReason, callId || '', campaignId || '')
+      console.log('Generating opening TwiML for:', customerName, 'Services:', services)
+      const openingTwiML = generateOpeningTwiML(customerName, services, callId || '', campaignId || '')
       return new NextResponse(openingTwiML, {
         headers: { 'Content-Type': 'text/xml' }
       })
@@ -79,8 +76,7 @@ export async function POST(request: NextRequest) {
         callId,
         campaignId || '',
         speechResult, 
-        customerName,
-        customerReason
+        customerName
       )
       
       return new NextResponse(conversationTwiML, {
@@ -125,41 +121,46 @@ export async function POST(request: NextRequest) {
 /**
  * Generate opening TwiML for the call
  */
-function generateOpeningTwiML(customerName: string, customerReason: string, callId: string, campaignId: string): string {
+function generateOpeningTwiML(customerName: string, services: string[], callId: string, campaignId: string): string {
   const bankName = process.env.BANK_NAME || 'Your Bank'
   const botName = process.env.BOT_NAME || 'Customer Care Assistant'
   
-  // Generate concise opening that goes straight into the first question
-  let openingMessage: string
+  // Determine service context and question based on selected services
+  let serviceContext = 'your experience with us'
+  let question = 'Could you share your thoughts about your recent experience?'
   
-  if (customerReason && customerReason.trim()) {
-    const lowerReason = customerReason.toLowerCase()
-    let serviceContext = 'your credit card experience'
-    let question = 'Could you share what prompted those changes?'
+  // Check the first service in the array (primary service)
+  if (services && services.length > 0) {
+    const primaryService = services[0].toLowerCase()
     
-    // Make it specific to the service
-    if (lowerReason.includes('credit card') || lowerReason.includes('card')) {
+    if (primaryService.includes('credit card') || primaryService === 'credit card') {
       serviceContext = 'your credit card experience'
-      question = 'Could you share what prompted those changes?'
-    } else if (lowerReason.includes('account') || lowerReason.includes('checking') || lowerReason.includes('savings')) {
-      serviceContext = 'your account with us'
-      question = 'Could you tell me what prompted those changes?'
-    } else if (lowerReason.includes('loan') || lowerReason.includes('mortgage')) {
+      question = 'Could you share what has been on your mind regarding your credit card?'
+    } else if (primaryService.includes('personal banking') || primaryService === 'personal banking') {
+      serviceContext = 'your personal banking experience'
+      question = 'Could you tell me about your recent banking experience?'
+    } else if (primaryService.includes('loan') || primaryService === 'loans') {
       serviceContext = 'your loan experience'
-      question = 'Could you share what led to those changes?'
-    } else if (lowerReason.includes('investment') || lowerReason.includes('wealth')) {
+      question = 'Could you share your thoughts about your loan experience?'
+    } else if (primaryService.includes('mortgage') || primaryService === 'mortgage') {
+      serviceContext = 'your mortgage experience'
+      question = 'Could you tell me about your mortgage experience with us?'
+    } else if (primaryService.includes('business') || primaryService === 'business banking') {
+      serviceContext = 'your business banking experience'
+      question = 'Could you share your thoughts about our business banking services?'
+    } else if (primaryService.includes('investment') || primaryService === 'investment services') {
       serviceContext = 'your investment experience'
-      question = 'Could you tell me what prompted those changes?'
-    } else {
-      serviceContext = 'your recent experience with us'
-      question = 'Could you share what prompted those changes?'
+      question = 'Could you tell me about your experience with our investment services?'
+    } else if (primaryService.includes('mobile') || primaryService.includes('online') || primaryService === 'mobile & online banking') {
+      serviceContext = 'your digital banking experience'
+      question = 'Could you share your thoughts about our mobile or online banking?'
+    } else if (primaryService.includes('customer service') || primaryService === 'customer service') {
+      serviceContext = 'your customer service experience'
+      question = 'Could you tell me about your recent experience with our customer service?'
     }
-    
-    openingMessage = `Hello ${customerName}, this is ${botName} from ${bankName}. I'm calling about ${serviceContext}. ${question}`
-  } else {
-    // No reason - ask open question
-    openingMessage = `Hello ${customerName}, this is ${botName} from ${bankName}. I'm calling because you recently made changes to your account. Could you share what prompted those changes?`
   }
+  
+  const openingMessage = `Hello ${customerName}, this is ${botName} from ${bankName}. I'm calling about ${serviceContext}. ${question}`
   
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -188,8 +189,7 @@ async function handleCustomerResponse(
   callId: string,
   campaignId: string,
   speechResult: string, 
-  customerName: string,
-  customerReason: string
+  customerName: string
 ): Promise<string> {
   try {
     // Use CallOrchestrator to process the response with OpenAI
