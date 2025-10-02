@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { ProcessedCustomer } from '@/types/customer'
 import { Call, CallCampaign, CallStatus, CampaignStatus } from '@/types/call'
+import { ConversationContext } from './openai-client'
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://qocnqfblhtgppiauthta.supabase.co'
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
@@ -203,6 +204,90 @@ class Database {
     if (error) throw error
     return (data || []).map(row => this.mapRowToCall(row))
   }
+
+  // ==================== CONVERSATION METHODS ====================
+  
+  /**
+   * Save conversation context to database
+   */
+  async insertConversation(context: ConversationContext): Promise<void> {
+    const { error } = await supabase
+      .from('conversations')
+      .upsert({
+        id: context.callId,
+        call_id: context.callId,
+        campaign_id: context.campaignId,
+        customer_name: context.customerName,
+        customer_reason: context.customerReason,
+        services: context.services,
+        bank_name: context.bankName,
+        bot_name: context.botName,
+        conversation_history: context.conversationHistory,
+        updated_at: new Date().toISOString()
+      })
+    
+    if (error) {
+      console.error('Error inserting conversation:', error)
+      throw error
+    }
+  }
+  
+  /**
+   * Get conversation context by call ID
+   */
+  async getConversationByCallId(callId: string): Promise<ConversationContext | null> {
+    const { data, error } = await supabase
+      .from('conversations')
+      .select('*')
+      .eq('call_id', callId)
+      .single()
+    
+    if (error) {
+      if (error.code === 'PGRST116') {
+        // Not found, return null
+        return null
+      }
+      console.error('Error fetching conversation:', error)
+      throw error
+    }
+    
+    return data ? this.mapRowToConversation(data) : null
+  }
+  
+  /**
+   * Update conversation history
+   */
+  async updateConversationHistory(callId: string, history: ConversationContext['conversationHistory']): Promise<void> {
+    const { error } = await supabase
+      .from('conversations')
+      .update({
+        conversation_history: history,
+        updated_at: new Date().toISOString()
+      })
+      .eq('call_id', callId)
+    
+    if (error) {
+      console.error('Error updating conversation history:', error)
+      throw error
+    }
+  }
+  
+  /**
+   * Delete conversation context
+   */
+  async deleteConversation(callId: string): Promise<void> {
+    const { error } = await supabase
+      .from('conversations')
+      .delete()
+      .eq('call_id', callId)
+    
+    if (error) {
+      console.error('Error deleting conversation:', error)
+      throw error
+    }
+  }
+
+  // ==================== MAPPING METHODS ====================
   
   private mapRowToCustomer(row: any): ProcessedCustomer {
     return {
@@ -275,6 +360,22 @@ class Database {
       services: row.services || [],
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at)
+    }
+  }
+  
+  private mapRowToConversation(row: any): ConversationContext {
+    return {
+      callId: row.call_id,
+      campaignId: row.campaign_id,
+      customerName: row.customer_name,
+      customerReason: row.customer_reason || '',
+      services: row.services || [],
+      bankName: row.bank_name,
+      botName: row.bot_name,
+      conversationHistory: (row.conversation_history || []).map((msg: any) => ({
+        ...msg,
+        timestamp: new Date(msg.timestamp)
+      }))
     }
   }
 }

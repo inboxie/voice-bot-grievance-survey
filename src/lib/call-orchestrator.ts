@@ -24,8 +24,6 @@ export class CallOrchestrator {
   private db: Database
   private twilioClient: TwilioClient
   private openaiClient: OpenAIClient
-  private activeCalls: Map<string, ConversationContext> = new Map()
-  private processingQueue: Map<string, NodeJS.Timeout> = new Map()
   
   constructor() {
     this.db = Database.getInstance()
@@ -33,13 +31,9 @@ export class CallOrchestrator {
     this.openaiClient = new OpenAIClient()
   }
   
-  /**
-   * Start a new calling campaign
-   */
   async startCampaign(config: CampaignConfig): Promise<{ campaignId: string; callsScheduled: number }> {
     await this.db.connect()
     
-    // Create campaign record
     const campaign: CallCampaign = {
       id: uuidv4(),
       name: config.name,
@@ -65,11 +59,8 @@ export class CallOrchestrator {
     }
     
     await this.db.insertCampaign(campaign)
-    
-    // Store customers in database
     await this.db.insertCustomers(config.customers)
     
-    // Create call records
     const calls: Call[] = config.customers.map(customer => ({
       id: uuidv4(),
       customerId: customer.id,
@@ -85,12 +76,10 @@ export class CallOrchestrator {
       updatedAt: new Date()
     }))
     
-    // Insert calls into database
     for (const call of calls) {
       await this.db.insertCall(call)
     }
     
-    // Start processing calls
     this.processCampaignCalls(campaign.id)
     
     return {
@@ -99,9 +88,6 @@ export class CallOrchestrator {
     }
   }
   
-  /**
-   * Process calls for a campaign with concurrency control
-   */
   private async processCampaignCalls(campaignId: string): Promise<void> {
     const campaign = await this.db.getCampaignById(campaignId)
     if (!campaign || campaign.status !== 'running') return
@@ -109,16 +95,14 @@ export class CallOrchestrator {
     const pendingCalls = await this.db.getCallsByStatus('pending')
     const campaignCalls = pendingCalls.filter(call => call.campaignId === campaignId)
     
-    // Process calls with concurrency limit
     const concurrentLimit = campaign.maxConcurrentCalls
     let activeCount = 0
     
     for (const call of campaignCalls) {
       if (activeCount >= concurrentLimit) {
-        // Schedule remaining calls with delay
         setTimeout(() => {
           this.processCampaignCalls(campaignId)
-        }, 10000) // Check again in 10 seconds
+        }, 10000)
         break
       }
       
@@ -126,7 +110,6 @@ export class CallOrchestrator {
       this.processIndividualCall(call)
         .finally(() => {
           activeCount--
-          // Continue processing remaining calls
           setTimeout(() => {
             this.processCampaignCalls(campaignId)
           }, 2000)
@@ -134,17 +117,12 @@ export class CallOrchestrator {
     }
   }
   
-  /**
-   * Process an individual call
-   */
   private async processIndividualCall(call: Call): Promise<void> {
     try {
-      // Update call status to calling
       await this.db.updateCallStatus(call.id, 'calling', {
         startedAt: new Date()
       })
       
-      // Get customer data
       const customer = await this.db.getCustomerById(call.customerId)
       if (!customer) {
         await this.db.updateCallStatus(call.id, 'failed', {
@@ -153,10 +131,9 @@ export class CallOrchestrator {
         return
       }
       
-      // Format phone number
       const formattedPhone = TwilioClient.formatPhoneNumber(call.customerPhone)
       
-      // Initialize conversation context
+      // Create conversation context
       const context: ConversationContext = {
         callId: call.id,
         campaignId: call.campaignId,
@@ -168,9 +145,10 @@ export class CallOrchestrator {
         conversationHistory: []
       }
       
-      this.activeCalls.set(call.id, context)
+      // Save context to database
+      await this.db.insertConversation(context)
+      console.log(`[processIndividualCall] Saved conversation context for callId: ${call.id}`)
       
-      // Initiate Twilio call
       const twilioResult = await this.twilioClient.makeCall({
         ...call,
         customerPhone: formattedPhone
@@ -184,7 +162,7 @@ export class CallOrchestrator {
         await this.db.updateCallStatus(call.id, 'failed', {
           errorMessage: twilioResult.error
         })
-        this.activeCalls.delete(call.id)
+        await this.db.deleteConversation(call.id)
       }
       
     } catch (error) {
@@ -192,17 +170,12 @@ export class CallOrchestrator {
       await this.db.updateCallStatus(call.id, 'failed', {
         errorMessage: error instanceof Error ? error.message : 'Unknown error'
       })
-      this.activeCalls.delete(call.id)
     }
   }
   
-  /**
-   * Handle Twilio webhook updates
-   */
   async handleTwilioWebhook(payload: any): Promise<void> {
-    const { CallSid, CallStatus, Duration, From, To } = payload
+    const { CallSid, CallStatus, Duration } = payload
     
-    // Find call by Twilio SID
     const calls = await this.db.getCallsByStatus('ringing')
     const activeCalls = await this.db.getCallsByStatus('answered')
     const allCalls = [...calls, ...activeCalls]
@@ -213,7 +186,6 @@ export class CallOrchestrator {
       return
     }
     
-    // Map Twilio status to our status
     let newStatus: CallStatus
     const updates: Partial<Call> = {}
     
@@ -248,7 +220,6 @@ export class CallOrchestrator {
     
     await this.db.updateCallStatus(call.id, newStatus, updates)
     
-    // Handle call completion
     if (newStatus === 'completed') {
       await this.handleCallCompletion(call.id)
     } else if (newStatus === 'failed') {
@@ -256,18 +227,17 @@ export class CallOrchestrator {
     }
   }
   
-  /**
-   * Handle completed call
-   */
   private async handleCallCompletion(callId: string): Promise<void> {
-    const context = this.activeCalls.get(callId)
-    if (!context) return
-    
     try {
-      // Generate call summary
+      // Load context from database
+      const context = await this.db.getConversationByCallId(callId)
+      if (!context) {
+        console.log(`[handleCallCompletion] No conversation found for callId: ${callId}`)
+        return
+      }
+      
       const summary = await this.openaiClient.generateCallSummary(context)
       
-      // Update call with summary
       await this.db.updateCallStatus(callId, 'completed', {
         transcript: this.formatTranscript(context.conversationHistory),
         summary: summary.summary,
@@ -275,64 +245,53 @@ export class CallOrchestrator {
         keyIssues: summary.keyIssues
       })
       
-      // Get recording and transcription from Twilio
-      const call = await this.db.getCallsByCampaign(context.campaignId)
-      const currentCall = call.find(c => c.id === callId)
+      const call = await this.db.getCallById(callId)
       
-      if (currentCall?.twilioSid) {
-        // Fetch recording URL
-        const recordingUrl = await this.twilioClient.getCallRecording(currentCall.twilioSid)
+      if (call?.twilioSid) {
+        const recordingUrl = await this.twilioClient.getCallRecording(call.twilioSid)
         console.log('Recording URL:', recordingUrl)
         
-        // Fetch Twilio transcription
-        const twilioTranscription = await this.twilioClient.getCallTranscription(currentCall.twilioSid)
+        const twilioTranscription = await this.twilioClient.getCallTranscription(call.twilioSid)
         if (twilioTranscription) {
           console.log('Twilio transcription:', twilioTranscription)
         }
       }
       
+      // Clean up conversation from database
+      await this.db.deleteConversation(callId)
+      console.log(`[handleCallCompletion] Deleted conversation for callId: ${callId}`)
+      
     } catch (error) {
       console.error('Error handling call completion:', error)
-    } finally {
-      this.activeCalls.delete(callId)
     }
   }
   
-  /**
-   * Handle failed call with retry logic
-   */
   private async handleCallFailure(callId: string): Promise<void> {
-    const calls = await this.db.getCallsByCampaign('')
-    const call = calls.find(c => c.id === callId)
+    const call = await this.db.getCallById(callId)
     
     if (!call) return
     
     const campaign = await this.db.getCampaignById(call.campaignId)
     if (!campaign) return
     
-    // Check if we should retry
     if (call.retryCount < call.maxRetries) {
       const shouldRetry = this.shouldRetryCall(call.errorMessage || '', campaign.retrySettings)
       
       if (shouldRetry) {
-        // Schedule retry
-        const retryDelay = campaign.retrySettings.retryDelay * 60 * 1000 // Convert to milliseconds
+        const retryDelay = campaign.retrySettings.retryDelay * 60 * 1000
         
         setTimeout(async () => {
           await this.db.updateCallStatus(callId, 'pending')
-          // The campaign processor will pick this up
         }, retryDelay)
         
         console.log(`Scheduling retry for call ${callId} in ${campaign.retrySettings.retryDelay} minutes`)
       }
     }
     
-    this.activeCalls.delete(callId)
+    // Clean up conversation
+    await this.db.deleteConversation(callId)
   }
   
-  /**
-   * Determine if a call should be retried based on error and settings
-   */
   private shouldRetryCall(errorMessage: string, retrySettings: any): boolean {
     const error = errorMessage.toLowerCase()
     
@@ -344,60 +303,59 @@ export class CallOrchestrator {
   }
   
   /**
- * Handle incoming audio stream from customer
- */
-async handleCustomerInput(callId: string, audioInput: string): Promise<string> {
-  console.log(`[handleCustomerInput] START - callId: ${callId}`)
-  console.log(`[handleCustomerInput] audioInput: ${audioInput.substring(0, 200)}`)
-  
-  const context = this.activeCalls.get(callId)
-  if (!context) {
-    console.error(`[handleCustomerInput] ERROR - No context found for callId: ${callId}`)
-    console.log(`[handleCustomerInput] Active calls:`, Array.from(this.activeCalls.keys()))
-    return "I'm sorry, there seems to be a technical issue. Could you please repeat that?"
-  }
-  
-  console.log(`[handleCustomerInput] Context found for ${context.customerName}`)
-  
-  try {
-    console.log('[handleCustomerInput] Calling OpenAI generateResponse...')
-    const startTime = Date.now()
-    
-    const aiResponse = await this.openaiClient.generateResponse(audioInput, context)
-    
-    const duration = Date.now() - startTime
-    console.log(`[handleCustomerInput] OpenAI responded in ${duration}ms`)
-    console.log(`[handleCustomerInput] AI message: ${aiResponse.message.substring(0, 200)}`)
-    console.log(`[handleCustomerInput] shouldEndCall: ${aiResponse.shouldEndCall}`)
-    
-    // Check if call should end
-    if (aiResponse.shouldEndCall) {
-      console.log('[handleCustomerInput] Ending call...')
-      const closingMessage = this.openaiClient.generateClosingMessage(context, aiResponse.summary)
-      
-      // Schedule call completion
-      setTimeout(async () => {
-        await this.handleCallCompletion(callId)
-      }, 5000)
-      
-      return closingMessage
-    }
-    
-    const optimizedResponse = this.openaiClient.optimizeForSpeech(aiResponse.message)
-    console.log(`[handleCustomerInput] Returning optimized response: ${optimizedResponse.substring(0, 200)}`)
-    
-    return optimizedResponse
-    
-  } catch (error) {
-    console.error('[handleCustomerInput] ERROR:', error)
-    console.error('[handleCustomerInput] Error stack:', error instanceof Error ? error.stack : 'No stack')
-    return "I apologize for the technical difficulty. Could you please continue with what you were saying?"
-  }
-}
-  
-  /**
-   * Get campaign status and statistics
+   * Handle incoming audio stream from customer - NOW LOADS FROM DATABASE
    */
+  async handleCustomerInput(callId: string, audioInput: string): Promise<string> {
+    console.log(`[handleCustomerInput] START - callId: ${callId}`)
+    console.log(`[handleCustomerInput] audioInput: ${audioInput.substring(0, 200)}`)
+    
+    try {
+      // Load context from database
+      let context = await this.db.getConversationByCallId(callId)
+      
+      if (!context) {
+        console.error(`[handleCustomerInput] No conversation found in DB for callId: ${callId}`)
+        return "I'm sorry, there seems to be a technical issue. Could you please repeat that?"
+      }
+      
+      console.log(`[handleCustomerInput] Context loaded from DB for ${context.customerName}`)
+      console.log('[handleCustomerInput] Calling OpenAI generateResponse...')
+      
+      const startTime = Date.now()
+      const aiResponse = await this.openaiClient.generateResponse(audioInput, context)
+      const duration = Date.now() - startTime
+      
+      console.log(`[handleCustomerInput] OpenAI responded in ${duration}ms`)
+      console.log(`[handleCustomerInput] AI message: ${aiResponse.message.substring(0, 200)}`)
+      console.log(`[handleCustomerInput] shouldEndCall: ${aiResponse.shouldEndCall}`)
+      
+      // Save updated conversation history to database
+      await this.db.updateConversationHistory(callId, context.conversationHistory)
+      console.log(`[handleCustomerInput] Saved conversation history to DB`)
+      
+      if (aiResponse.shouldEndCall) {
+        console.log('[handleCustomerInput] Ending call...')
+        const closingMessage = this.openaiClient.generateClosingMessage(context, aiResponse.summary)
+        
+        setTimeout(async () => {
+          await this.handleCallCompletion(callId)
+        }, 5000)
+        
+        return closingMessage
+      }
+      
+      const optimizedResponse = this.openaiClient.optimizeForSpeech(aiResponse.message)
+      console.log(`[handleCustomerInput] Returning response: ${optimizedResponse.substring(0, 200)}`)
+      
+      return optimizedResponse
+      
+    } catch (error) {
+      console.error('[handleCustomerInput] ERROR:', error)
+      console.error('[handleCustomerInput] Error stack:', error instanceof Error ? error.stack : 'No stack')
+      return "I apologize for the technical difficulty. Could you please continue with what you were saying?"
+    }
+  }
+  
   async getCampaignStatus(campaignId: string): Promise<any> {
     const campaign = await this.db.getCampaignById(campaignId)
     if (!campaign) return null
@@ -420,13 +378,9 @@ async handleCustomerInput(callId: string, audioInput: string): Promise<string> {
     }
   }
   
-  /**
-   * Cancel a campaign
-   */
   async cancelCampaign(campaignId: string): Promise<void> {
     await this.db.updateCampaignStatus(campaignId, 'cancelled')
     
-    // Cancel active calls
     const activeCalls = await this.db.getCallsByCampaign(campaignId)
     for (const call of activeCalls) {
       if (['calling', 'ringing', 'answered'].includes(call.status)) {
@@ -438,9 +392,6 @@ async handleCustomerInput(callId: string, audioInput: string): Promise<string> {
     }
   }
   
-  /**
-   * Format conversation history as transcript
-   */
   private formatTranscript(history: ConversationContext['conversationHistory']): string {
     return history
       .filter(msg => msg.role !== 'system')
