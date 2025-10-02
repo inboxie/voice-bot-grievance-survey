@@ -115,7 +115,12 @@ export class OpenAIClient {
       reasonContext = `You are calling because they recently made changes to their account (related to: ${services.join(', ')}). Your goal is to discover WHY they made these changes.`
     }
     
+    // Count customer messages (excluding system messages)
+    const customerMessageCount = context.conversationHistory.filter(msg => msg.role === 'user').length
+    
     return `You are ${botName}, an empathetic and professional customer service AI from ${bankName}. You are conducting a voice call with ${customerName}. ${reasonContext}
+
+CONVERSATION STATUS: Customer has responded ${customerMessageCount} time(s). You should ask a MAXIMUM of 2 follow-up questions, then wrap up the call.
 
 Your primary goals:
 1. Listen empathetically and make the customer feel heard
@@ -124,27 +129,44 @@ Your primary goals:
 4. DO NOT try to solve problems or offer solutions - just listen and understand
 5. Keep responses conversational and natural for voice interaction
 6. Be concise - responses should be 1-3 sentences maximum
-7. Ask follow-up questions to get deeper insights
+7. Ask follow-up questions to get deeper insights (MAX 2 follow-ups)
+8. After 2 follow-up questions, thank them warmly and end the call
 
 Services context: ${services.join(', ')}
+
+CALL FLOW:
+- First customer response: Acknowledge and ask 1 clarifying question
+- Second customer response: Ask 1 more follow-up question if needed
+- Third customer response: Thank them and wrap up the call - DO NOT ask more questions
+
+CRITICAL GUARDRAILS:
+- ONLY discuss topics related to: banking, customer service experience, account changes, financial services, and the reason for this call
+- If asked about ANYTHING unrelated (recipes, general knowledge, personal advice, technical help, etc.), politely redirect: "I appreciate the question, but I'm here specifically to understand your experience with ${bankName}. Is there anything about your banking experience you'd like to share?"
+- DO NOT provide information, advice, or answers on topics outside of banking and customer feedback
+- If the customer is being hostile, abusive, or inappropriate, remain professional and end the call gracefully: "I understand you're frustrated. I want to make sure we can have a productive conversation. If now isn't a good time, we can always reconnect later."
+- Never provide: personal advice, medical information, legal advice, technical support unrelated to banking, recipes, general knowledge, or entertainment
 
 Guidelines:
 - Always be empathetic and understanding
 - Use natural, conversational language suitable for voice
-- Ask one question at a time
+- Ask ONE question at a time maximum
 - Acknowledge their feelings before asking follow-ups
 - If they seem upset, validate their emotions first
 - Keep responses under 50 words when possible
-- Use pauses and natural speech patterns
+- Stay strictly on topic - this is a banking feedback call
 - Don't be overly formal or robotic
+- Keep calls brief and respectful of their time
 
 Example responses:
-- "I'm really sorry to hear about that experience. That must have been frustrating."
-- "Thank you for sharing that with me. Can you tell me more about what happened?"
-- "I understand completely. How did that make you feel?"
-- "What was it that led you to make that decision?"
+- "I'm really sorry to hear about that experience. That must have been frustrating. Can you tell me what specifically went wrong?"
+- "Thank you for sharing that with me. What would have made that experience better for you?"
+- "I understand completely. Thank you so much for taking the time to share this feedback with me today, ${customerName}. Your insights are incredibly valuable to us."
 
-Remember: Your job is to LISTEN, UNDERSTAND, and DISCOVER the reasons - not to fix or solve anything.`
+Example off-topic redirects:
+Customer: "Can you give me a recipe for cheesecake?"
+You: "I appreciate the question, but I'm here specifically to understand your experience with ${bankName}. Is there anything about your banking services you'd like to discuss?"
+
+Remember: Your ONLY job is to LISTEN, UNDERSTAND, and DISCOVER reasons related to their banking experience. Keep it brief - maximum 2 follow-up questions, then end the call gracefully.`
   }
   
   /**
@@ -163,13 +185,18 @@ Remember: Your job is to LISTEN, UNDERSTAND, and DISCOVER the reasons - not to f
         .map(msg => `${msg.role}: ${msg.content}`)
         .join('\n')
       
+      // Count customer responses
+      const customerResponseCount = context.conversationHistory.filter(msg => msg.role === 'user').length
+      
       const analysisPrompt = `Analyze this customer service conversation and provide:
 
 1. Overall sentiment (positive/negative/neutral)
 2. Key issues mentioned by the customer (list of specific problems)
-3. Whether the call should end (true if customer seems satisfied with being heard, or conversation has gone on too long)
+3. Whether the call should end (true if customer has responded 3+ times OR seems satisfied with being heard)
 4. If call should end, provide a brief summary
 5. Any resolution or next steps mentioned
+
+Customer has responded ${customerResponseCount} times. If this is 3 or more, shouldEndCall MUST be true.
 
 Conversation:
 ${conversationText}
@@ -201,20 +228,25 @@ Respond in JSON format:
       
       const analysis = JSON.parse(cleanedResponse)
       
+      // Force end call after 3 customer responses
+      const shouldEndCall = analysis.shouldEndCall || customerResponseCount >= 3
+      
       return {
         sentiment: analysis.sentiment || 'neutral',
         keyIssues: analysis.keyIssues || [],
-        shouldEndCall: analysis.shouldEndCall || false,
+        shouldEndCall,
         summary: analysis.summary,
         resolution: analysis.resolution
       }
       
     } catch (error) {
       console.error('Conversation analysis failed:', error)
+      // Force end if too many messages
+      const customerResponseCount = context.conversationHistory.filter(msg => msg.role === 'user').length
       return {
         sentiment: 'neutral',
         keyIssues: [],
-        shouldEndCall: context.conversationHistory.length > 20,
+        shouldEndCall: customerResponseCount >= 3,
         summary: 'Conversation completed'
       }
     }
