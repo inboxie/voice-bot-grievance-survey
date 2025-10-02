@@ -344,37 +344,56 @@ export class CallOrchestrator {
   }
   
   /**
-   * Handle incoming audio stream from customer
-   */
-  async handleCustomerInput(callId: string, audioInput: string): Promise<string> {
-    const context = this.activeCalls.get(callId)
-    if (!context) {
-      return "I'm sorry, there seems to be a technical issue. Could you please repeat that?"
+ * Handle incoming audio stream from customer
+ */
+async handleCustomerInput(callId: string, audioInput: string): Promise<string> {
+  console.log(`[handleCustomerInput] START - callId: ${callId}`)
+  console.log(`[handleCustomerInput] audioInput: ${audioInput.substring(0, 200)}`)
+  
+  const context = this.activeCalls.get(callId)
+  if (!context) {
+    console.error(`[handleCustomerInput] ERROR - No context found for callId: ${callId}`)
+    console.log(`[handleCustomerInput] Active calls:`, Array.from(this.activeCalls.keys()))
+    return "I'm sorry, there seems to be a technical issue. Could you please repeat that?"
+  }
+  
+  console.log(`[handleCustomerInput] Context found for ${context.customerName}`)
+  
+  try {
+    console.log('[handleCustomerInput] Calling OpenAI generateResponse...')
+    const startTime = Date.now()
+    
+    const aiResponse = await this.openaiClient.generateResponse(audioInput, context)
+    
+    const duration = Date.now() - startTime
+    console.log(`[handleCustomerInput] OpenAI responded in ${duration}ms`)
+    console.log(`[handleCustomerInput] AI message: ${aiResponse.message.substring(0, 200)}`)
+    console.log(`[handleCustomerInput] shouldEndCall: ${aiResponse.shouldEndCall}`)
+    
+    // Check if call should end
+    if (aiResponse.shouldEndCall) {
+      console.log('[handleCustomerInput] Ending call...')
+      const closingMessage = this.openaiClient.generateClosingMessage(context, aiResponse.summary)
+      
+      // Schedule call completion
+      setTimeout(async () => {
+        await this.handleCallCompletion(callId)
+      }, 5000)
+      
+      return closingMessage
     }
     
-    try {
-      // Process customer input with OpenAI
-      const aiResponse = await this.openaiClient.generateResponse(audioInput, context)
-      
-      // Check if call should end
-      if (aiResponse.shouldEndCall) {
-        const closingMessage = this.openaiClient.generateClosingMessage(context, aiResponse.summary)
-        
-        // Schedule call completion
-        setTimeout(async () => {
-          await this.handleCallCompletion(callId)
-        }, 5000) // Give time for closing message
-        
-        return closingMessage
-      }
-      
-      return this.openaiClient.optimizeForSpeech(aiResponse.message)
-      
-    } catch (error) {
-      console.error('Error processing customer input:', error)
-      return "I apologize for the technical difficulty. Could you please continue with what you were saying?"
-    }
+    const optimizedResponse = this.openaiClient.optimizeForSpeech(aiResponse.message)
+    console.log(`[handleCustomerInput] Returning optimized response: ${optimizedResponse.substring(0, 200)}`)
+    
+    return optimizedResponse
+    
+  } catch (error) {
+    console.error('[handleCustomerInput] ERROR:', error)
+    console.error('[handleCustomerInput] Error stack:', error instanceof Error ? error.stack : 'No stack')
+    return "I apologize for the technical difficulty. Could you please continue with what you were saying?"
   }
+}
   
   /**
    * Get campaign status and statistics
