@@ -175,6 +175,10 @@ class Database {
         ended_at: updates?.endedAt?.toISOString(),
         duration: updates?.duration,
         transcript: updates?.transcript,
+        summary: updates?.summary,
+        sentiment: updates?.sentiment,
+        key_issues: updates?.keyIssues,
+        resolution: updates?.resolution,
         error_message: updates?.errorMessage
       })
       .eq('id', id)
@@ -211,6 +215,8 @@ class Database {
    * Save conversation context to database
    */
   async insertConversation(context: ConversationContext): Promise<void> {
+    console.log('[insertConversation] Saving context for callId:', context.callId)
+    
     const { error } = await supabase
       .from('conversations')
       .upsert({
@@ -227,9 +233,11 @@ class Database {
       })
     
     if (error) {
-      console.error('Error inserting conversation:', error)
+      console.error('[insertConversation] Error:', error)
       throw error
     }
+    
+    console.log('[insertConversation] Successfully saved context')
   }
   
   /**
