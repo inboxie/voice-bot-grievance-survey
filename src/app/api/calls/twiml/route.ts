@@ -306,9 +306,22 @@ function checkIfShouldEndCall(speechResult: string, aiResponse: string): boolean
     'have to go', 'gotta go', 'need to run'
   ]
   
-  // AI ending phrases
+  // AI ending phrases - expanded to catch all closing message variations
   const aiEndIndicators = [
-    'thank you for your time', 'have a wonderful day', 'appreciate your feedback'
+    'thank you for your time',
+    'have a wonderful day',
+    'appreciate your feedback',
+    'incredibly valuable',
+    'pass on the feedback',
+    'pass along',
+    'passed along',
+    'will be passed',
+    'thank you so much for taking the time',
+    'thank you for taking the time',
+    'we value your feedback',
+    'your feedback is valuable',
+    'your insights are',
+    'appreciate you sharing'
   ]
   
   return endIndicators.some(indicator => lowerSpeech.includes(indicator)) ||
