@@ -169,7 +169,7 @@ function generateOpeningTwiML(customerName: string, customerReason: string, call
         speechTimeout="3"
         language="en-US"
         hints="yes,no,sure,okay,not now,busy,call later"
-        action="https://voice-bot-grievance-survey.vercel.app/api/calls/twiml?callId=${callId}&campaignId=${campaignId}"
+        action="https://voice-bot-grievance-survey.vercel.app/api/calls/twiml?callId=${callId}&amp;campaignId=${campaignId}"
         method="POST">
         <Say voice="alice" language="en-US">Please go ahead and share your thoughts.</Say>
     </Gather>
@@ -214,7 +214,7 @@ async function handleCustomerResponse(
         timeout="15" 
         speechTimeout="3"
         language="en-US"
-        action="https://voice-bot-grievance-survey.vercel.app/api/calls/twiml?callId=${callId}&campaignId=${campaignId}"
+        action="https://voice-bot-grievance-survey.vercel.app/api/calls/twiml?callId=${callId}&amp;campaignId=${campaignId}"
         method="POST">
         <Say voice="alice" language="en-US">Please continue.</Say>
     </Gather>
