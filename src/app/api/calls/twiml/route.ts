@@ -211,6 +211,7 @@ async function handleCustomerResponse(
     // Continue conversation
     return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
+    <Pause length="0.5"/>
     <Say voice="Polly.Joanna-Neural" language="en-US">${aiResponse.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</Say>
     <Pause length="1"/>
     <Gather 
@@ -296,37 +297,17 @@ function handleDTMFResponse(digits: string, customerName: string): string {
  * Check if call should end based on customer response
  */
 function checkIfShouldEndCall(speechResult: string, aiResponse: string): boolean {
-  const lowerSpeech = speechResult.toLowerCase()
   const lowerAI = aiResponse.toLowerCase()
   
-  // End call indicators
-  const endIndicators = [
-    'not now', 'call later', 'busy', 'can\'t talk', 'not a good time',
-    'thank you', 'that\'s all', 'nothing else', 'goodbye', 'bye',
-    'have to go', 'gotta go', 'need to run'
+  // ONLY end if the AI response contains VERY specific closing phrases from generateClosingMessage()
+  const strictEndIndicators = [
+    'we value your feedback tremendously',
+    'everything you\'ve shared will be passed along',
+    'giving us this opportunity to listen',
+    'we\'ve heard everything you\'ve shared'
   ]
   
-  // AI ending phrases - expanded to catch all closing message variations
-  const aiEndIndicators = [
-    'thank you for your time',
-    'have a wonderful day',
-    'appreciate your feedback',
-    'incredibly valuable',
-    'pass on the feedback',
-    'pass along',
-    'passed along',
-    'will be passed',
-    'thank you so much for taking the time',
-    'thank you for taking the time',
-    'we value your feedback',
-    'your feedback is valuable',
-    'your insights are',
-    'appreciate you sharing'
-  ]
-  
-  return endIndicators.some(indicator => lowerSpeech.includes(indicator)) ||
-         aiEndIndicators.some(indicator => lowerAI.includes(indicator)) ||
-         speechResult.trim().length < 10
+  return strictEndIndicators.some(indicator => lowerAI.includes(indicator))
 }
 
 /**
